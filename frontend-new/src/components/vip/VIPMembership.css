@@ -1,0 +1,78 @@
+.vip-membership-container {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 20px;
+}
+
+.vip-card {
+  height: 100%;
+  transition: transform 0.3s ease, box-shadow 0.3s ease;
+}
+
+.vip-card:hover {
+  transform: translateY(-5px);
+  box-shadow: 0 10px 20px rgba(0, 0, 0, 0.1);
+}
+
+.vip-card .card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.vip-card .price {
+  font-size: 2rem;
+  font-weight: bold;
+  text-align: center;
+  margin: 15px 0;
+}
+
+.vip-card .period {
+  font-size: 1rem;
+  font-weight: normal;
+  color: #6c757d;
+}
+
+.feature-list {
+  list-style-type: none;
+  padding-left: 0;
+  margin-bottom: 20px;
+}
+
+.feature-list li {
+  padding: 8px 0;
+  border-bottom: 1px solid #f0f0f0;
+}
+
+.feature-list li:last-child {
+  border-bottom: none;
+}
+
+.current-plan {
+  box-shadow: 0 0 15px rgba(0, 123, 255, 0.3);
+}
+
+.promoter-benefits {
+  margin-bottom: 30px;
+}
+
+.benefit-icon {
+  font-size: 2.5rem;
+  margin-bottom: 15px;
+}
+
+/* 推广权益卡片样式 */
+.promoter-benefits {
+  border: none;
+  box-shadow: 0 5px 15px rgba(0, 0, 0, 0.08);
+  border-radius: 10px;
+}
+
+.promoter-benefits .card-body {
+  padding: 30px;
+}
+
+/* VIP即将到期提醒样式 */
+.text-danger strong {
+  font-weight: 600;
+}

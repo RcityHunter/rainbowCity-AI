@@ -1,0 +1,151 @@
+.auth-layout {
+  min-height: 100vh;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  position: relative;
+  overflow: hidden;
+  background: linear-gradient(135deg, #1a1a2e, #16213e, #0f3460);
+}
+
+.auth-background {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  z-index: 0;
+}
+
+@keyframes animStar {
+  from {
+    transform: translateY(0);
+  }
+  to {
+    transform: translateY(-2000px);
+  }
+}
+
+.auth-stars {
+  width: 1px;
+  height: 1px;
+  background: transparent;
+  box-shadow: 1803px 1804px #fff, 1539px 258px #fff, 1285px 1306px #fff,
+    1751px 1317px #fff, 1773px 1892px #fff, 1290px 1634px #fff, 1798px 1286px #fff,
+    1235px 1689px #fff, 1677px 1573px #fff, 1096px 1898px #fff, 1310px 1668px #fff,
+    1479px 1707px #fff, 1292px 1188px #fff, 1819px 1489px #fff, 1431px 1448px #fff;
+  animation: animStar 50s linear infinite;
+}
+
+.auth-stars:after {
+  content: " ";
+  position: absolute;
+  top: 2000px;
+  width: 1px;
+  height: 1px;
+  background: transparent;
+  box-shadow: 1803px 1804px #fff, 1539px 258px #fff, 1285px 1306px #fff,
+    1751px 1317px #fff, 1773px 1892px #fff, 1290px 1634px #fff, 1798px 1286px #fff,
+    1235px 1689px #fff, 1677px 1573px #fff, 1096px 1898px #fff, 1310px 1668px #fff,
+    1479px 1707px #fff, 1292px 1188px #fff, 1819px 1489px #fff, 1431px 1448px #fff;
+}
+
+.auth-stars2 {
+  width: 2px;
+  height: 2px;
+  background: transparent;
+  box-shadow: 1803px 1804px #a18cd1, 1539px 258px #a18cd1, 1285px 1306px #a18cd1,
+    1751px 1317px #a18cd1, 1773px 1892px #a18cd1, 1290px 1634px #a18cd1, 1798px 1286px #a18cd1,
+    1235px 1689px #a18cd1, 1677px 1573px #a18cd1, 1096px 1898px #a18cd1, 1310px 1668px #a18cd1,
+    1479px 1707px #a18cd1, 1292px 1188px #a18cd1, 1819px 1489px #a18cd1, 1431px 1448px #a18cd1;
+  animation: animStar 100s linear infinite;
+}
+
+.auth-stars2:after {
+  content: " ";
+  position: absolute;
+  top: 2000px;
+  width: 2px;
+  height: 2px;
+  background: transparent;
+  box-shadow: 1803px 1804px #a18cd1, 1539px 258px #a18cd1, 1285px 1306px #a18cd1,
+    1751px 1317px #a18cd1, 1773px 1892px #a18cd1, 1290px 1634px #a18cd1, 1798px 1286px #a18cd1,
+    1235px 1689px #a18cd1, 1677px 1573px #a18cd1, 1096px 1898px #a18cd1, 1310px 1668px #a18cd1,
+    1479px 1707px #a18cd1, 1292px 1188px #a18cd1, 1819px 1489px #a18cd1, 1431px 1448px #a18cd1;
+}
+
+.auth-stars3 {
+  width: 3px;
+  height: 3px;
+  background: transparent;
+  box-shadow: 1803px 1804px #fbc2eb, 1539px 258px #fbc2eb, 1285px 1306px #fbc2eb,
+    1751px 1317px #fbc2eb, 1773px 1892px #fbc2eb, 1290px 1634px #fbc2eb, 1798px 1286px #fbc2eb,
+    1235px 1689px #fbc2eb, 1677px 1573px #fbc2eb, 1096px 1898px #fbc2eb, 1310px 1668px #fbc2eb,
+    1479px 1707px #fbc2eb, 1292px 1188px #fbc2eb, 1819px 1489px #fbc2eb, 1431px 1448px #fbc2eb;
+  animation: animStar 150s linear infinite;
+}
+
+.auth-stars3:after {
+  content: " ";
+  position: absolute;
+  top: 2000px;
+  width: 3px;
+  height: 3px;
+  background: transparent;
+  box-shadow: 1803px 1804px #fbc2eb, 1539px 258px #fbc2eb, 1285px 1306px #fbc2eb,
+    1751px 1317px #fbc2eb, 1773px 1892px #fbc2eb, 1290px 1634px #fbc2eb, 1798px 1286px #fbc2eb,
+    1235px 1689px #fbc2eb, 1677px 1573px #fbc2eb, 1096px 1898px #fbc2eb, 1310px 1668px #fbc2eb,
+    1479px 1707px #fbc2eb, 1292px 1188px #fbc2eb, 1819px 1489px #fbc2eb, 1431px 1448px #fbc2eb;
+}
+
+.auth-container {
+  width: 100%;
+  max-width: 500px;
+  padding: 2rem;
+  position: relative;
+  z-index: 1;
+}
+
+.auth-header {
+  text-align: center;
+  margin-bottom: 2rem;
+}
+
+.auth-logo {
+  font-size: 2.5rem;
+  font-weight: bold;
+  color: #fff;
+  text-decoration: none;
+  display: block;
+  margin-bottom: 0.5rem;
+  background: linear-gradient(135deg, #a18cd1, #fbc2eb);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  text-shadow: 0 0 20px rgba(255, 255, 255, 0.1);
+}
+
+.auth-subtitle {
+  font-size: 1.2rem;
+  color: #ccc;
+}
+
+.auth-content {
+  margin-bottom: 2rem;
+}
+
+.auth-footer {
+  text-align: center;
+  color: #aaa;
+  font-size: 0.8rem;
+}
+
+@media (max-width: 576px) {
+  .auth-container {
+    padding: 1.5rem;
+  }
+  
+  .auth-logo {
+    font-size: 2rem;
+  }
+}

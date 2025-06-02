@@ -1,0 +1,311 @@
+/* 聊天侧边栏样式 */
+.chat-sidebar {
+  position: fixed;
+  left: -10px;
+  top: 0;
+  height: 100vh;
+  width: 15px;
+  z-index: 1000;
+  display: flex;
+  transition: all 0.25s ease-in-out;
+  overflow: hidden;
+}
+
+/* 展开状态 */
+.chat-sidebar.expanded {
+  left: 0;
+  width: 320px;
+  box-shadow: 0 0 20px rgba(0, 0, 0, 0.3);
+}
+
+/* 触发区域 */
+.sidebar-trigger {
+  width: 15px;
+  height: 100%;
+  background-color: rgba(26, 26, 46, 0.3);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  border-right: 1px solid rgba(42, 42, 61, 0.2);
+  opacity: 0.5;
+  transition: all 0.25s ease;
+}
+
+.chat-sidebar:hover .sidebar-trigger {
+  opacity: 1;
+  background-color: rgba(26, 26, 46, 0.5);
+}
+
+.trigger-icon {
+  width: 12px;
+  height: 12px;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='%23a18cd1' viewBox='0 0 24 24'%3E%3Cpath d='M3 18h18v-2H3v2zm0-5h18v-2H3v2zm0-7v2h18V6H3z'/%3E%3C/svg%3E");
+  background-size: contain;
+  background-repeat: no-repeat;
+  transition: transform 0.25s ease;
+  margin-left: 3px;
+  opacity: 0.8;
+}
+
+.chat-sidebar:hover .trigger-icon {
+  opacity: 1;
+}
+
+.chat-sidebar.expanded .trigger-icon {
+  transform: rotate(180deg);
+}
+
+/* 侧边栏内容区域 - 毛玻璃效果 */
+.sidebar-content {
+  flex: 1;
+  background-color: rgba(26, 26, 46, 0.65);
+  backdrop-filter: blur(15px);
+  -webkit-backdrop-filter: blur(15px);
+  border-right: 1px solid rgba(42, 42, 61, 0.5);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  position: relative;
+  z-index: 1000;
+}
+
+/* 添加模糊覆盖层 */
+.sidebar-content::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: linear-gradient(135deg, rgba(161, 140, 209, 0.05), rgba(251, 194, 235, 0.05));
+  z-index: -1;
+}
+
+/* 侧边栏头部 */
+.sidebar-header {
+  padding: 15px;
+  border-bottom: 1px solid rgba(42, 42, 61, 0.5);
+}
+
+.sidebar-actions {
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 15px;
+}
+
+.search-button, .new-chat-button {
+  background: none;
+  border: none;
+  color: #ffffff;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  font-size: 14px;
+  padding: 8px 12px;
+  border-radius: 6px;
+  transition: background-color 0.2s;
+}
+
+.search-button:hover, .new-chat-button:hover {
+  background-color: rgba(161, 140, 209, 0.2);
+}
+
+.search-icon, .new-chat-icon {
+  width: 16px;
+  height: 16px;
+  margin-right: 8px;
+}
+
+.search-icon {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='%23ffffff' viewBox='0 0 24 24'%3E%3Cpath d='M15.5 14h-.79l-.28-.27C15.41 12.59 16 11.11 16 9.5 16 5.91 13.09 3 9.5 3S3 5.91 3 9.5 5.91 16 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z'/%3E%3C/svg%3E");
+  background-size: contain;
+  background-repeat: no-repeat;
+}
+
+.new-chat-icon {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='%23ffffff' viewBox='0 0 24 24'%3E%3Cpath d='M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z'/%3E%3C/svg%3E");
+  background-size: contain;
+  background-repeat: no-repeat;
+}
+
+.search-container {
+  position: relative;
+  width: 100%;
+  margin: 10px 0;
+  padding: 0 15px;
+  box-sizing: border-box;
+}
+
+.search-input {
+  width: 100%;
+  height: 40px;
+  padding: 0 15px;
+  border-radius: 20px;
+  border: 1px solid rgba(42, 42, 61, 0.8);
+  background-color: rgba(15, 15, 26, 0.5);
+  color: #ffffff;
+  font-size: 14px;
+  outline: none;
+  transition: border-color 0.3s;
+  box-sizing: border-box;
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  appearance: none;
+}
+
+.search-input:focus {
+  border-color: #a18cd1;
+}
+
+/* 对话列表 */
+.conversations-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 15px;
+}
+
+.conversation-item {
+  padding: 12px;
+  border-radius: 8px;
+  margin-bottom: 10px;
+  background-color: rgba(42, 42, 61, 0.5);
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.conversation-item:hover {
+  background-color: rgba(42, 42, 61, 0.8);
+  transform: translateY(-2px);
+}
+
+.conversation-title {
+  font-size: 14px;
+  font-weight: 500;
+  margin-bottom: 5px;
+  color: #ffffff;
+}
+
+.conversation-preview {
+  font-size: 12px;
+  color: #b8b8b8;
+  margin-bottom: 5px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.conversation-time {
+  font-size: 11px;
+  color: #888888;
+  text-align: right;
+}
+
+.no-conversations {
+  padding: 20px;
+  text-align: center;
+  color: #b8b8b8;
+  font-style: italic;
+}
+
+/* 未登录内容包装器 */
+.sidebar-content-wrapper {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* 未登录用户的登录容器 */
+.login-container {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  text-align: center;
+  width: 90%;
+  max-width: 280px;
+  visibility: visible !important;
+  opacity: 1 !important;
+}
+
+/* 登录信息 */
+.login-message {
+  margin-bottom: 20px;
+  color: #a18cd1;
+}
+
+.login-message p {
+  margin: 8px 0;
+  font-size: 14px;
+}
+
+/* 登录按钮 */
+.login-button {
+  display: block;
+  width: 80%;
+  padding: 12px;
+  background: linear-gradient(135deg, #a18cd1, #fbc2eb);
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  font-weight: bold;
+  text-align: center;
+  cursor: pointer;
+  text-decoration: none;
+  margin-bottom: 10px;
+  transition: all 0.3s ease;
+}
+
+.login-button:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
+}
+
+/* 注册链接 */
+.signup-link {
+  color: #a18cd1;
+  font-size: 12px;
+  text-decoration: none;
+  margin-top: 10px;
+}
+
+.signup-link:hover {
+  text-decoration: underline;
+}
+
+/* 滚动条样式 */
+.conversations-list::-webkit-scrollbar {
+  width: 5px;
+}
+
+.conversations-list::-webkit-scrollbar-track {
+  background: rgba(15, 15, 26, 0.3);
+}
+
+.conversations-list::-webkit-scrollbar-thumb {
+  background: rgba(161, 140, 209, 0.5);
+  border-radius: 3px;
+}
+
+.conversations-list::-webkit-scrollbar-thumb:hover {
+  background: rgba(161, 140, 209, 0.7);
+}
+
+/* 移动端适配 */
+@media (max-width: 768px) {
+  .chat-sidebar.expanded {
+    width: 280px;
+  }
+  
+  .sidebar-trigger {
+    width: 50px;
+  }
+  
+  .chat-sidebar {
+    width: 50px;
+  }
+}

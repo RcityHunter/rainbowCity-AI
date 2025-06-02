@@ -1,0 +1,428 @@
+/* 频率编号生成器 - 深色主题样式 */
+.frequency-generator {
+  max-width: 800px;
+  margin: 0 auto;
+  padding: 20px;
+  background-color: var(--bg-card);
+  border-radius: 8px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+  color: var(--text-primary);
+}
+
+.generator-title {
+  background: var(--gradient);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  font-size: 1.8rem;
+  font-weight: 500;
+  margin-bottom: 20px;
+  text-align: center;
+  position: relative;
+  padding-bottom: 10px;
+}
+
+.generator-title::after {
+  content: '';
+  position: absolute;
+  bottom: 0;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 100px;
+  height: 3px;
+  background: var(--gradient);
+  border-radius: 2px;
+}
+
+.generator-section {
+  margin-bottom: 30px;
+  padding: 20px;
+  background-color: rgba(0, 0, 0, 0.2);
+  border-radius: 8px;
+  border: 1px solid var(--border-color);
+  transition: all 0.3s ease;
+}
+
+.generator-section:hover {
+  box-shadow: 0 5px 15px rgba(0, 0, 0, 0.3);
+  border-color: rgba(110, 69, 226, 0.3);
+}
+
+.generator-section h3 {
+  margin-top: 0;
+  color: var(--text-primary);
+  border-bottom: 1px solid var(--border-color);
+  padding-bottom: 10px;
+  margin-bottom: 20px;
+  font-weight: 500;
+  font-size: 1.2rem;
+}
+
+.config-section {
+  margin-bottom: 20px;
+}
+
+.config-section h4 {
+  margin-bottom: 10px;
+  color: var(--text-secondary);
+  font-weight: 500;
+  font-size: 1rem;
+}
+
+.text-input {
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  font-size: 16px;
+  margin-bottom: 15px;
+  background-color: var(--bg-card);
+  color: var(--text-primary);
+  transition: all 0.3s ease;
+}
+
+.text-input:focus {
+  border-color: var(--primary-color);
+  outline: none;
+  box-shadow: 0 0 0 2px rgba(110, 69, 226, 0.2);
+}
+
+.select-input {
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  font-size: 16px;
+  margin-bottom: 15px;
+  background-color: var(--bg-card);
+  color: var(--text-primary);
+  transition: all 0.3s ease;
+  cursor: pointer;
+}
+
+.select-input:focus {
+  border-color: var(--primary-color);
+  outline: none;
+  box-shadow: 0 0 0 2px rgba(110, 69, 226, 0.2);
+}
+
+.sliders-container {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: 15px;
+}
+
+.slider-container {
+  margin-bottom: 15px;
+}
+
+.slider-container label {
+  display: block;
+  margin-bottom: 8px;
+  font-weight: 500;
+  color: var(--text-secondary);
+}
+
+.slider {
+  width: 100%;
+  height: 8px;
+  border-radius: 4px;
+  appearance: none;
+  outline: none;
+  background-color: var(--bg-card);
+  overflow: hidden;
+}
+
+/* 彩虹色滑块 - 深色主题版 */
+.slider-1 {
+  background: linear-gradient(to right, var(--bg-card), #ff0000);
+}
+
+.slider-2 {
+  background: linear-gradient(to right, var(--bg-card), #ff8000);
+}
+
+.slider-3 {
+  background: linear-gradient(to right, var(--bg-card), #ffff00);
+}
+
+.slider-4 {
+  background: linear-gradient(to right, var(--bg-card), #00ff00);
+}
+
+.slider-5 {
+  background: linear-gradient(to right, var(--bg-card), #0080ff);
+}
+
+.slider-6 {
+  background: linear-gradient(to right, var(--bg-card), #8000ff);
+}
+
+.slider-7 {
+  background: linear-gradient(to right, var(--bg-card), #ff00ff);
+}
+
+.slider::-webkit-slider-thumb {
+  appearance: none;
+  width: 18px;
+  height: 18px;
+  background: var(--gradient);
+  border: 2px solid var(--primary-color);
+  border-radius: 50%;
+  cursor: pointer;
+  box-shadow: 0 0 5px rgba(0, 0, 0, 0.3);
+}
+
+.generate-button {
+  background: var(--gradient);
+  color: white;
+  border: none;
+  border-radius: 5px;
+  padding: 12px 24px;
+  font-size: 16px;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  font-weight: 500;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  position: relative;
+  overflow: hidden;
+  margin: 1rem 0;
+  width: 100%;
+}
+
+.generate-button::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: -100%;
+  width: 100%;
+  height: 100%;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.2), transparent);
+  transition: all 0.6s ease;
+}
+
+.generate-button:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 5px 15px rgba(110, 69, 226, 0.4);
+}
+
+.generate-button:hover::before {
+  left: 100%;
+}
+
+.generate-button:disabled {
+  background: #333;
+  color: #666;
+  cursor: not-allowed;
+  transform: none;
+  box-shadow: none;
+}
+
+.result-container {
+  margin-top: 20px;
+  padding: 20px;
+  background-color: var(--bg-card);
+  border-radius: 8px;
+  border-left: 4px solid var(--primary-color);
+  animation: fade-in 0.5s ease-out;
+}
+
+.frequency-container {
+  display: flex;
+  align-items: center;
+  margin: 15px 0;
+  background-color: rgba(0, 0, 0, 0.2);
+  padding: 15px;
+  border-radius: 6px;
+  border: 1px solid var(--border-color);
+}
+
+.frequency-number {
+  flex-grow: 1;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 18px;
+  word-break: break-all;
+  margin: 0;
+  padding: 5px;
+  color: var(--text-primary);
+}
+
+.copy-button {
+  background-color: transparent;
+  color: var(--secondary-color);
+  border: 1px solid var(--secondary-color);
+  border-radius: 4px;
+  padding: 8px 16px;
+  margin-left: 10px;
+  cursor: pointer;
+  font-size: 14px;
+  transition: all 0.3s ease;
+}
+
+.copy-button:hover {
+  background-color: rgba(136, 211, 206, 0.1);
+  box-shadow: 0 0 10px rgba(136, 211, 206, 0.3);
+}
+
+.frequency-details {
+  margin-top: 20px;
+}
+
+.frequency-details h4 {
+  color: var(--secondary-color);
+  margin-bottom: 15px;
+  font-size: 16px;
+  font-weight: 500;
+}
+
+.detail-item {
+  margin-bottom: 15px;
+  padding-bottom: 15px;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.detail-item:last-child {
+  border-bottom: none;
+}
+
+.detail-label {
+  font-weight: 500;
+  color: var(--text-secondary);
+  margin-right: 10px;
+  font-size: 0.9rem;
+  letter-spacing: 0.5px;
+}
+
+.detail-value {
+  color: var(--text-primary);
+  font-size: 0.9rem;
+  word-break: break-all;
+}
+
+.detail-value.highlight {
+  color: var(--secondary-color);
+  font-weight: 500;
+  font-size: 1.1rem;
+  letter-spacing: 0.5px;
+}
+
+.detail-value.small {
+  font-size: 0.8rem;
+  font-family: 'JetBrains Mono', 'Courier New', monospace;
+  color: var(--text-secondary);
+  opacity: 0.8;
+}
+
+.detail-description {
+  margin-top: 8px;
+  color: var(--text-secondary);
+  font-size: 14px;
+  font-style: italic;
+  opacity: 0.8;
+}
+
+.error-message {
+  background-color: rgba(231, 76, 60, 0.2);
+  color: var(--error-color);
+  border: 1px solid rgba(231, 76, 60, 0.3);
+  padding: 1rem;
+  border-radius: 5px;
+  margin: 1rem 0;
+  text-align: center;
+  font-weight: 500;
+  font-size: 0.9rem;
+}
+
+@keyframes fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* 复制通知样式 */
+.copy-notification {
+  position: fixed;
+  bottom: 20px;
+  right: 20px;
+  background: var(--gradient);
+  color: white;
+  padding: 12px 20px;
+  border-radius: 8px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+  z-index: 1000;
+  font-size: 14px;
+  font-weight: 500;
+  animation: slide-in 0.3s ease-out forwards;
+  display: flex;
+  align-items: center;
+}
+
+.copy-notification::before {
+  content: '✓';
+  margin-right: 8px;
+  font-weight: bold;
+}
+
+.copy-notification.error {
+  background: linear-gradient(135deg, #e74c3c, #c0392b);
+}
+
+.copy-notification.error::before {
+  content: '✗';
+}
+
+.copy-notification.fade-out {
+  animation: fade-out 0.3s ease-in forwards;
+}
+
+@keyframes slide-in {
+  from {
+    transform: translateX(100%);
+    opacity: 0;
+  }
+  to {
+    transform: translateX(0);
+    opacity: 1;
+  }
+}
+
+@keyframes fade-out {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+  }
+}
+
+/* 响应式设计 */
+@media (max-width: 768px) {
+  .sliders-container {
+    grid-template-columns: 1fr;
+  }
+  
+  .frequency-container {
+    flex-direction: column;
+  }
+  
+  .copy-button {
+    margin-left: 0;
+    margin-top: 10px;
+    width: 100%;
+  }
+  
+  .copy-notification {
+    bottom: 10px;
+    right: 10px;
+    left: 10px;
+    width: calc(100% - 20px);
+    text-align: center;
+    justify-content: center;
+  }
+}

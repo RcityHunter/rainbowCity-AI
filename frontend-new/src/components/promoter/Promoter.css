@@ -1,0 +1,103 @@
+.promoter-application-container {
+  max-width: 800px;
+  margin: 0 auto;
+  padding: 20px;
+}
+
+.promoter-card {
+  margin-bottom: 20px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+}
+
+.promoter-info {
+  margin-top: 24px;
+  padding-top: 16px;
+  border-top: 1px solid #f0f0f0;
+}
+
+.promoter-dashboard {
+  padding: 20px;
+}
+
+.promoter-stats-card {
+  margin-bottom: 24px;
+}
+
+.promoter-stat-item {
+  text-align: center;
+  padding: 16px;
+}
+
+.promoter-stat-value {
+  font-size: 24px;
+  font-weight: bold;
+  color: #1890ff;
+  margin-bottom: 8px;
+}
+
+.promoter-stat-title {
+  color: rgba(0, 0, 0, 0.45);
+}
+
+.promoter-chart-card {
+  margin-bottom: 24px;
+  height: 300px;
+}
+
+.promoter-links-card {
+  margin-bottom: 24px;
+}
+
+.promoter-link-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px 0;
+  border-bottom: 1px solid #f0f0f0;
+}
+
+.promoter-link-item:last-child {
+  border-bottom: none;
+}
+
+.promoter-link-copy {
+  margin-left: 8px;
+}
+
+.promoter-withdraw-form {
+  max-width: 400px;
+  margin: 0 auto;
+}
+
+.promoter-withdraw-button {
+  margin-top: 16px;
+}
+
+/* 推广用户管理界面样式 */
+.promoter-admin-container {
+  padding: 20px;
+}
+
+.promoter-application-table {
+  margin-top: 16px;
+}
+
+.promoter-action-buttons {
+  display: flex;
+  gap: 8px;
+}
+
+/* 响应式调整 */
+@media (max-width: 768px) {
+  .promoter-application-container {
+    padding: 10px;
+  }
+  
+  .promoter-dashboard {
+    padding: 10px;
+  }
+  
+  .promoter-stat-value {
+    font-size: 20px;
+  }
+}

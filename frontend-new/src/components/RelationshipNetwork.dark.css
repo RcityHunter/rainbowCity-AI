@@ -1,0 +1,128 @@
+.relationship-network {
+  position: relative;
+  margin: 20px 0;
+  border-radius: 10px;
+  overflow: hidden;
+  background-color: var(--bg-card);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+}
+
+.relationship-network svg {
+  background: linear-gradient(135deg, rgba(0, 0, 0, 0.8) 0%, rgba(20, 20, 30, 0.9) 100%);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.loading {
+  padding: 40px;
+  text-align: center;
+  color: var(--text-secondary);
+  font-size: 1rem;
+  background-color: var(--bg-card);
+  border-radius: 8px;
+  border: 1px solid var(--border-color);
+  animation: pulse 1.5s infinite ease-in-out;
+}
+
+.error {
+  padding: 20px;
+  text-align: center;
+  color: var(--error-color);
+  background-color: rgba(231, 76, 60, 0.1);
+  border: 1px solid rgba(231, 76, 60, 0.3);
+  border-radius: 8px;
+  margin: 20px 0;
+}
+
+.node-details {
+  position: absolute;
+  top: 20px;
+  right: 20px;
+  background-color: var(--bg-card);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  padding: 15px;
+  width: 250px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+  z-index: 10;
+  animation: fade-in 0.3s ease-out;
+}
+
+.node-details h4 {
+  margin-top: 0;
+  color: var(--secondary-color);
+  border-bottom: 1px solid var(--border-color);
+  padding-bottom: 10px;
+  margin-bottom: 15px;
+  font-weight: 500;
+}
+
+.node-details p {
+  margin: 8px 0;
+  color: var(--text-secondary);
+  font-size: 0.9rem;
+}
+
+.node-details button {
+  background-color: transparent;
+  color: var(--secondary-color);
+  border: 1px solid var(--secondary-color);
+  border-radius: 4px;
+  padding: 6px 12px;
+  margin-top: 15px;
+  cursor: pointer;
+  font-size: 0.9rem;
+  transition: all 0.3s ease;
+}
+
+.node-details button:hover {
+  background-color: rgba(136, 211, 206, 0.1);
+  box-shadow: 0 0 10px rgba(136, 211, 206, 0.3);
+}
+
+/* 节点和连接的悬停效果 */
+.relationship-network g:hover circle {
+  filter: brightness(1.2);
+  stroke-width: 2px;
+  transition: all 0.3s ease;
+}
+
+.relationship-network g:hover text {
+  opacity: 1 !important;
+  font-weight: 500;
+}
+
+/* 动画效果 */
+@keyframes pulse {
+  0% {
+    opacity: 0.6;
+  }
+  50% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0.6;
+  }
+}
+
+@keyframes fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* 响应式设计 */
+@media (max-width: 768px) {
+  .node-details {
+    position: relative;
+    top: auto;
+    right: auto;
+    width: auto;
+    margin-top: 20px;
+  }
+}

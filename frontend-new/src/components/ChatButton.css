@@ -1,0 +1,117 @@
+.chat-button-container {
+  position: fixed;
+  bottom: 30px;
+  right: 30px;
+  z-index: 1000;
+}
+
+.chat-button {
+  width: 60px;
+  height: 60px;
+  border-radius: 50%;
+  background: var(--gradient);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+  border: none;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: white;
+  font-size: 24px;
+  transition: all 0.3s ease;
+}
+
+.chat-button:hover {
+  transform: translateY(-5px);
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.4);
+}
+
+.chat-button:active {
+  transform: translateY(0);
+}
+
+.chat-button svg {
+  width: 28px;
+  height: 28px;
+  fill: white;
+}
+
+.chat-modal {
+  position: fixed;
+  bottom: 100px;
+  right: 30px;
+  width: 400px;
+  height: 600px;
+  background-color: var(--bg-card);
+  border-radius: 12px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+  z-index: 999;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  animation: slide-up 0.3s ease-out;
+}
+
+.chat-modal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 15px 20px;
+  background: var(--gradient);
+  color: white;
+}
+
+.chat-modal-title {
+  font-size: 18px;
+  font-weight: 500;
+  margin: 0;
+}
+
+.chat-modal-close {
+  background: transparent;
+  border: none;
+  color: white;
+  font-size: 20px;
+  cursor: pointer;
+  width: 30px;
+  height: 30px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  transition: background-color 0.2s;
+}
+
+.chat-modal-close:hover {
+  background-color: rgba(255, 255, 255, 0.2);
+}
+
+.chat-modal-content {
+  flex-grow: 1;
+  overflow: hidden;
+}
+
+@keyframes slide-up {
+  from {
+    opacity: 0;
+    transform: translateY(50px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@media (max-width: 768px) {
+  .chat-modal {
+    width: 90%;
+    height: 80%;
+    bottom: 10%;
+    right: 5%;
+  }
+  
+  .chat-button-container {
+    bottom: 20px;
+    right: 20px;
+  }
+}

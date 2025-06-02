@@ -1,0 +1,65 @@
+.admin-container {
+  padding: 20px;
+}
+
+.admin-card {
+  margin-bottom: 24px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+}
+
+.admin-stats-row {
+  margin-bottom: 24px;
+}
+
+.admin-stat-card {
+  text-align: center;
+  padding: 16px;
+}
+
+.admin-stat-value {
+  font-size: 24px;
+  font-weight: bold;
+  color: #1890ff;
+  margin-bottom: 8px;
+}
+
+.admin-stat-title {
+  color: rgba(0, 0, 0, 0.45);
+}
+
+.admin-chart-card {
+  margin-bottom: 24px;
+  height: 300px;
+}
+
+.admin-table-card {
+  margin-bottom: 24px;
+}
+
+.admin-action-buttons {
+  display: flex;
+  gap: 8px;
+}
+
+.admin-form-item {
+  margin-bottom: 16px;
+}
+
+.admin-tabs {
+  margin-bottom: 24px;
+}
+
+.admin-alert {
+  margin-bottom: 16px;
+}
+
+/* 响应式调整 */
+@media (max-width: 768px) {
+  .admin-container {
+    padding: 10px;
+  }
+  
+  .admin-stat-value {
+    font-size: 20px;
+  }
+}
