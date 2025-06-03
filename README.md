@@ -78,7 +78,7 @@ Rainbow City（彩虹城）是一个创新的AI交互平台，集成了一体七
    
    # 安装后端依赖
    cd ../backend
-   python install requirements.txt
+   pip install -r requirements.txt
    ```
 
 3. 配置环境变量
