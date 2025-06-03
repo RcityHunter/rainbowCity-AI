@@ -1,6 +1,6 @@
 # Rainbow City - AI共生社区 
 
-![Rainbow City Logo](frontend-new/public/logo.png)
+![Rainbow City Logo](frontend/public/logo.png)
 
 ## 项目概述
 
