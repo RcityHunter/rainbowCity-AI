@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Card, Row, Col, Statistic, Button, Table, Input, Tabs, Form, InputNumber, Alert, Spin, Typography, Divider, message } from 'antd';
+import { Card, Row, Col, Statistic, Button, Table, Input, Tabs, Form, InputNumber, Alert, Spin, Typography, Divider, message, Tag } from 'antd';
 import { CopyOutlined, LinkOutlined, UserAddOutlined, DollarOutlined, LineChartOutlined } from '@ant-design/icons';
 import axios from 'axios';
 import './Promoter.css';
