@@ -336,7 +336,7 @@ function AiChat() {
         }
         
         // 使用新的统一文件处理端点
-        response = await fetch('/api/agent/chat/with_file', {
+        response = await fetch('/api/chat/agent/with_file', {
           method: 'POST',
           headers: {
             'Authorization': `Bearer ${localStorage.getItem('token')}` // 添加认证令牌
@@ -535,7 +535,10 @@ function AiChat() {
       
       // 确定请求方法和URL
       const method = conversationId || currentConversationId ? 'PUT' : 'POST';
-      const API_BASE_URL = 'http://localhost:5000';
+      // 使用与其他服务文件一致的 API 基础 URL
+      const API_BASE_URL = process.env.NODE_ENV === 'production' 
+        ? '' // 生产环境使用相对路径
+        : 'http://localhost:5000';
       const url = conversationId || currentConversationId 
         ? `${API_BASE_URL}/api/conversations/${conversationId || currentConversationId}` 
         : `${API_BASE_URL}/api/conversations`;

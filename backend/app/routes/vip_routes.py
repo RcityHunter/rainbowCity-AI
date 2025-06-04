@@ -1,17 +1,22 @@
-from flask import Blueprint, request, jsonify, current_app
+from fastapi import APIRouter, HTTPException, Depends, Request, status
+from fastapi.responses import JSONResponse
+from pydantic import BaseModel, Field
+from typing import Dict, Any, Optional, List, Union, Literal
 from datetime import datetime, timedelta
-from app.models.user import User
-from app.models.enums import VIPLevel
-from app.db import db_session
-from app.routes.auth_routes import token_required
 import stripe
 import logging
+import os
 
-vip_bp = Blueprint('vip', __name__, url_prefix='/vip')
+from app.db import query, update as db_update, create
+from app.models.enums import VIPLevel, UserRole
+from app.routes.auth_routes import get_current_user
+
+# 创建路由器
+router = APIRouter(prefix="/vip", tags=["VIP会员"])
 
 # 初始化Stripe
 def init_stripe():
-    stripe.api_key = current_app.config.get('STRIPE_SECRET_KEY')
+    stripe.api_key = os.environ.get('STRIPE_SECRET_KEY')
 
 # VIP套餐价格配置（单位：分）
 VIP_PRICES = {
@@ -77,8 +82,50 @@ VIP_BENEFITS = {
     }
 }
 
-@vip_bp.route('/plans', methods=['GET'])
-def get_vip_plans():
+# 定义请求和响应模型
+class VIPPlan(BaseModel):
+    level: str
+    name: str
+    features: Dict[str, Any]
+    prices: Dict[str, int]
+    ai_companions_limit: int
+    ai_awakener_limit: int
+    daily_chat_limit: Union[int, float]
+    daily_lio_limit: Union[int, float]
+    weekly_invite_limit: Union[int, float]
+
+class VIPPlansResponse(BaseModel):
+    plans: List[VIPPlan]
+
+class VIPStatusResponse(BaseModel):
+    is_vip: bool
+    vip_level: Optional[str] = None
+    vip_expiry: Optional[str] = None
+    daily_usage: Dict[str, Any]
+    benefits: Dict[str, Any]
+
+class CheckoutRequest(BaseModel):
+    plan: str
+    interval: Literal['monthly', 'yearly']
+
+class CheckoutResponse(BaseModel):
+    checkout_url: str
+    session_id: str
+
+class AdminSetVIPRequest(BaseModel):
+    user_id: str
+    vip_level: str
+    duration_days: Optional[int] = 30
+
+class VIPStatusUpdateResponse(BaseModel):
+    message: str
+    user_id: str
+    vip_level: str
+    vip_expiry: str
+
+# 获取所有VIP套餐信息
+@router.get("/plans", response_model=VIPPlansResponse)
+async def get_vip_plans():
     """获取所有VIP套餐信息"""
     plans_list = []
     
@@ -101,43 +148,55 @@ def get_vip_plans():
     level_order = {'basic': 1, 'pro': 2, 'premium': 3}
     plans_list.sort(key=lambda x: level_order.get(x['level'], 0))
     
-    print(f"Returning VIP plans: {plans_list}")
-    return jsonify({
-        'plans': plans_list
-    }), 200
+    logging.info(f"Returning VIP plans: {plans_list}")
+    return {"plans": plans_list}
 
-@vip_bp.route('/status', methods=['GET'])
-@token_required
-def get_vip_status(current_user):
+# 获取当前用户的VIP状态
+@router.get("/status", response_model=VIPStatusResponse)
+async def get_vip_status(current_user: Dict[str, Any] = Depends(get_current_user)):
     """获取当前用户的VIP状态"""
-    return jsonify({
-        'is_vip': current_user.is_vip(),
-        'vip_level': current_user.vip_level.value if current_user.vip_level else None,
-        'vip_expiry': current_user.vip_expiry.isoformat() if current_user.vip_expiry else None,
+    # 检查用户是否为VIP
+    is_vip = False
+    vip_level = current_user.get('vip_level')
+    vip_expiry = current_user.get('vip_expiry')
+    
+    if vip_level and vip_level != 'free':
+        if vip_expiry:
+            # 检查VIP是否过期
+            expiry_date = datetime.fromisoformat(vip_expiry)
+            is_vip = expiry_date > datetime.utcnow()
+    
+    # 获取用户每日使用限制
+    daily_limit = VIP_BENEFITS.get(vip_level, VIP_BENEFITS['free']).get('daily_chat_limit', 10)
+    
+    return {
+        'is_vip': is_vip,
+        'vip_level': vip_level,
+        'vip_expiry': vip_expiry,
         'daily_usage': {
-            'current': current_user.daily_ai_usage,
-            'limit': current_user.get_daily_usage_limit()
+            'current': current_user.get('daily_ai_usage', 0),
+            'limit': daily_limit
         },
-        'benefits': VIP_BENEFITS.get(current_user.vip_level.name if current_user.vip_level else 'free', {})
-    }), 200
+        'benefits': VIP_BENEFITS.get(vip_level, VIP_BENEFITS['free'])
+    }
 
-@vip_bp.route('/checkout', methods=['POST'])
-@token_required
-def create_checkout_session(current_user):
+# 创建Stripe结账会话
+@router.post("/checkout", response_model=CheckoutResponse)
+async def create_checkout_session(
+    checkout_data: CheckoutRequest,
+    request: Request,
+    current_user: Dict[str, Any] = Depends(get_current_user)
+):
     """创建Stripe结账会话"""
     try:
         init_stripe()
         
-        data = request.get_json()
-        if not data or 'plan' not in data or 'interval' not in data:
-            return jsonify({'error': 'Plan and interval are required'}), 400
-        
-        plan = data['plan']
-        interval = data['interval']  # 'monthly' or 'yearly'
+        plan = checkout_data.plan
+        interval = checkout_data.interval
         
         # 验证计划和间隔
         if plan not in VIP_PRICES or interval not in VIP_PRICES[plan]:
-            return jsonify({'error': 'Invalid plan or interval'}), 400
+            raise HTTPException(status_code=400, detail="Invalid plan or interval")
         
         price_cents = VIP_PRICES[plan][interval]
         
@@ -145,6 +204,7 @@ def create_checkout_session(current_user):
         months = 1 if interval == 'monthly' else 12
         
         # 创建Stripe结账会话
+        base_url = str(request.base_url).rstrip('/')
         checkout_session = stripe.checkout.Session.create(
             payment_method_types=['card'],
             line_items=[{
@@ -159,42 +219,47 @@ def create_checkout_session(current_user):
                 'quantity': 1,
             }],
             mode='payment',
-            success_url=f"{request.host_url}vip/success?session_id={{CHECKOUT_SESSION_ID}}",
-            cancel_url=f"{request.host_url}vip/cancel",
+            success_url=f"{base_url}/vip/success?session_id={{CHECKOUT_SESSION_ID}}",
+            cancel_url=f"{base_url}/vip/cancel",
             metadata={
-                'user_id': current_user.id,
+                'user_id': current_user.get('id'),
                 'plan': plan,
                 'interval': interval,
                 'months': months
             }
         )
         
-        return jsonify({
+        return {
             'checkout_url': checkout_session.url,
             'session_id': checkout_session.id
-        }), 200
+        }
         
+    except stripe.error.StripeError as e:
+        logging.error(f"Stripe error: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Stripe error: {str(e)}")
     except Exception as e:
-        current_app.logger.error(f"Error creating checkout session: {str(e)}")
-        return jsonify({'error': f'Failed to create checkout session: {str(e)}'}), 500
+        logging.error(f"Error creating checkout session: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to create checkout session: {str(e)}")
 
-@vip_bp.route('/success', methods=['GET'])
-@token_required
-def payment_success(current_user):
+# 支付成功处理
+@router.get("/success", response_model=Dict[str, Any])
+async def payment_success(
+    session_id: str,
+    current_user: Dict[str, Any] = Depends(get_current_user)
+):
     """支付成功处理"""
     try:
         init_stripe()
         
-        session_id = request.args.get('session_id')
         if not session_id:
-            return jsonify({'error': 'Session ID is required'}), 400
+            raise HTTPException(status_code=400, detail="Session ID is required")
         
         # 获取会话信息
         session = stripe.checkout.Session.retrieve(session_id)
         
         # 验证用户ID
-        if int(session.metadata.get('user_id', 0)) != current_user.id:
-            return jsonify({'error': 'Unauthorized'}), 403
+        if session.metadata.get('user_id') != current_user.get('id'):
+            raise HTTPException(status_code=403, detail="Unauthorized")
         
         # 获取计划信息
         plan = session.metadata.get('plan')
@@ -202,128 +267,188 @@ def payment_success(current_user):
         
         # 更新用户VIP状态
         try:
-            current_user.vip_level = VIPLevel[plan]
-        except KeyError:
-            return jsonify({'error': 'Invalid plan'}), 400
+            # 检查计划是否有效
+            if plan not in [level.name for level in VIPLevel]:
+                raise HTTPException(status_code=400, detail="Invalid plan")
+            
+            # 设置过期时间
+            current_expiry = current_user.get('vip_expiry')
+            new_expiry = None
+            
+            if current_expiry:
+                expiry_date = datetime.fromisoformat(current_expiry)
+                if expiry_date > datetime.utcnow():
+                    # 如果当前VIP未过期，则延长时间
+                    new_expiry = (expiry_date + timedelta(days=30*months)).isoformat()
+                else:
+                    # 否则从现在开始计算
+                    new_expiry = (datetime.utcnow() + timedelta(days=30*months)).isoformat()
+            else:
+                # 没有过期时间，从现在开始计算
+                new_expiry = (datetime.utcnow() + timedelta(days=30*months)).isoformat()
+            
+            # 更新用户信息
+            update_data = {
+                'vip_level': plan,
+                'vip_expiry': new_expiry
+            }
+            
+            result = db_update('users', current_user.get('id'), update_data)
+            
+            if not result:
+                raise HTTPException(status_code=500, detail="Failed to update VIP status")
+            
+            return {
+                'message': 'Payment successful',
+                'vip_level': plan,
+                'vip_expiry': new_expiry
+            }
+            
+        except HTTPException:
+            raise
+        except Exception as e:
+            logging.error(f"Error updating VIP status: {str(e)}")
+            raise HTTPException(status_code=500, detail=f"Failed to update VIP status: {str(e)}")
         
-        # 设置过期时间
-        if current_user.vip_expiry and current_user.vip_expiry > datetime.utcnow():
-            # 如果当前VIP未过期，则延长时间
-            current_user.vip_expiry = current_user.vip_expiry + timedelta(days=30*months)
-        else:
-            # 否则从现在开始计算
-            current_user.vip_expiry = datetime.utcnow() + timedelta(days=30*months)
-        
-        db_session.commit()
-        
-        return jsonify({
-            'message': 'Payment successful',
-            'vip_level': current_user.vip_level.value,
-            'vip_expiry': current_user.vip_expiry.isoformat()
-        }), 200
-        
+    except stripe.error.StripeError as e:
+        logging.error(f"Stripe error: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Stripe error: {str(e)}")
     except Exception as e:
-        current_app.logger.error(f"Error processing payment success: {str(e)}")
-        return jsonify({'error': f'Failed to process payment: {str(e)}'}), 500
+        logging.error(f"Error processing payment success: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to process payment: {str(e)}")
 
-@vip_bp.route('/webhook', methods=['POST'])
-def stripe_webhook():
+# 处理Stripe Webhook事件
+@router.post("/webhook", status_code=200)
+async def stripe_webhook(request: Request):
     """处理Stripe Webhook事件"""
     try:
         init_stripe()
         
-        payload = request.get_data(as_text=True)
+        # 获取请求数据和签名
+        payload = await request.body()
         sig_header = request.headers.get('Stripe-Signature')
         
         # 验证Webhook签名
-        endpoint_secret = current_app.config.get('STRIPE_WEBHOOK_SECRET')
-        event = None
+        endpoint_secret = os.environ.get('STRIPE_WEBHOOK_SECRET')
         
         try:
             event = stripe.Webhook.construct_event(
                 payload, sig_header, endpoint_secret
             )
-        except ValueError as e:
+        except ValueError:
             # 无效的payload
-            return jsonify({'error': 'Invalid payload'}), 400
-        except stripe.error.SignatureVerificationError as e:
+            raise HTTPException(status_code=400, detail="Invalid payload")
+        except stripe.error.SignatureVerificationError:
             # 无效的签名
-            return jsonify({'error': 'Invalid signature'}), 400
+            raise HTTPException(status_code=400, detail="Invalid signature")
         
         # 处理事件
         if event['type'] == 'checkout.session.completed':
             session = event['data']['object']
             
             # 获取用户和计划信息
-            user_id = int(session.metadata.get('user_id', 0))
+            user_id = session.metadata.get('user_id')
             plan = session.metadata.get('plan')
             months = int(session.metadata.get('months', 1))
             
             # 查找用户
-            user = User.query.get(user_id)
-            if not user:
-                current_app.logger.error(f"User not found: {user_id}")
-                return jsonify({'error': 'User not found'}), 404
+            users = query('users', {'id': user_id})
+            if not users or len(users) == 0:
+                logging.error(f"User not found: {user_id}")
+                return {"status": "error", "message": "User not found"}
             
-            # 更新用户VIP状态
-            try:
-                user.vip_level = VIPLevel[plan]
-            except KeyError:
-                current_app.logger.error(f"Invalid plan: {plan}")
-                return jsonify({'error': 'Invalid plan'}), 400
+            user = users[0]
+            
+            # 检查计划是否有效
+            if plan not in [level.name for level in VIPLevel]:
+                logging.error(f"Invalid plan: {plan}")
+                return {"status": "error", "message": "Invalid plan"}
             
             # 设置过期时间
-            if user.vip_expiry and user.vip_expiry > datetime.utcnow():
-                # 如果当前VIP未过期，则延长时间
-                user.vip_expiry = user.vip_expiry + timedelta(days=30*months)
-            else:
-                # 否则从现在开始计算
-                user.vip_expiry = datetime.utcnow() + timedelta(days=30*months)
+            current_expiry = user.get('vip_expiry')
+            new_expiry = None
             
-            db_session.commit()
-            current_app.logger.info(f"Updated VIP status for user {user_id}: {plan}, expires {user.vip_expiry}")
+            if current_expiry:
+                expiry_date = datetime.fromisoformat(current_expiry)
+                if expiry_date > datetime.utcnow():
+                    # 如果当前VIP未过期，则延长时间
+                    new_expiry = (expiry_date + timedelta(days=30*months)).isoformat()
+                else:
+                    # 否则从现在开始计算
+                    new_expiry = (datetime.utcnow() + timedelta(days=30*months)).isoformat()
+            else:
+                # 没有过期时间，从现在开始计算
+                new_expiry = (datetime.utcnow() + timedelta(days=30*months)).isoformat()
+            
+            # 更新用户信息
+            update_data = {
+                'vip_level': plan,
+                'vip_expiry': new_expiry
+            }
+            
+            result = db_update('users', user_id, update_data)
+            
+            if not result:
+                logging.error(f"Failed to update VIP status for user {user_id}")
+                return {"status": "error", "message": "Failed to update VIP status"}
+            
+            logging.info(f"Updated VIP status for user {user_id}: {plan}, expires {new_expiry}")
         
-        return jsonify({'status': 'success'}), 200
+        return {"status": "success"}
         
     except Exception as e:
-        current_app.logger.error(f"Error processing webhook: {str(e)}")
-        return jsonify({'error': f'Failed to process webhook: {str(e)}'}), 500
+        logging.error(f"Error processing webhook: {str(e)}")
+        # 返回200状态码，避免Stripe重试
+        return {"status": "error", "message": f"Failed to process webhook: {str(e)}"}
 
-@vip_bp.route('/admin/set-vip', methods=['POST'])
-@token_required
-def admin_set_vip(current_user):
+# 管理员设置用户VIP状态（仅限管理员）
+@router.post("/admin/set-vip", response_model=VIPStatusUpdateResponse)
+async def admin_set_vip(
+    vip_data: AdminSetVIPRequest,
+    current_user: Dict[str, Any] = Depends(get_current_user)
+):
     """管理员设置用户VIP状态（仅限管理员）"""
-    # 验证管理员权限
-    if not current_user.has_role(UserRole.admin):
-        return jsonify({'error': 'Unauthorized'}), 403
-    
-    data = request.get_json()
-    if not data or 'user_id' not in data or 'vip_level' not in data:
-        return jsonify({'error': 'User ID and VIP level are required'}), 400
-    
-    user_id = data['user_id']
-    vip_level_name = data['vip_level']
-    duration_days = data.get('duration_days', 30)  # 默认30天
-    
-    # 查找用户
-    user = User.query.get(user_id)
-    if not user:
-        return jsonify({'error': 'User not found'}), 404
-    
-    # 设置VIP等级
     try:
-        user.vip_level = VIPLevel[vip_level_name]
-    except KeyError:
-        return jsonify({'error': 'Invalid VIP level'}), 400
-    
-    # 设置过期时间
-    user.vip_expiry = datetime.utcnow() + timedelta(days=duration_days)
-    
-    db_session.commit()
-    
-    return jsonify({
-        'message': 'VIP status updated successfully',
-        'user_id': user.id,
-        'vip_level': user.vip_level.value,
-        'vip_expiry': user.vip_expiry.isoformat()
-    }), 200
+        # 验证管理员权限
+        if 'admin' not in current_user.get('roles', []):
+            raise HTTPException(status_code=403, detail="Only administrators can update user VIP level")
+        
+        user_id = vip_data.user_id
+        vip_level_name = vip_data.vip_level
+        duration_days = vip_data.duration_days or 30
+        
+        # 查找用户
+        users = query('users', {'id': user_id})
+        if not users or len(users) == 0:
+            raise HTTPException(status_code=404, detail="User not found")
+        
+        # 检查VIP等级是否有效
+        if vip_level_name not in [level.name for level in VIPLevel]:
+            raise HTTPException(status_code=400, detail=f"Invalid VIP level: {vip_level_name}")
+        
+        # 设置过期时间
+        new_expiry = (datetime.utcnow() + timedelta(days=duration_days)).isoformat()
+        
+        # 更新用户VIP状态
+        update_data = {
+            'vip_level': vip_level_name,
+            'vip_expiry': new_expiry
+        }
+        
+        result = db_update('users', user_id, update_data)
+        
+        if not result:
+            raise HTTPException(status_code=500, detail="Failed to update VIP status")
+        
+        return {
+            'message': 'VIP status updated successfully',
+            'user_id': user_id,
+            'vip_level': vip_level_name,
+            'vip_expiry': new_expiry
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logging.error(f"Error updating user VIP level: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to update user VIP level: {str(e)}")

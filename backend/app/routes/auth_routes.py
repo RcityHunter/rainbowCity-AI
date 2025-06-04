@@ -1,582 +1,625 @@
-from flask import Blueprint, request, jsonify, current_app
-from werkzeug.security import generate_password_hash, check_password_hash
+from fastapi import APIRouter, HTTPException, Depends, Request, Header, status, Security
+from fastapi.responses import JSONResponse
+from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
+from pydantic import BaseModel, Field, EmailStr, validator
+from typing import Dict, Any, Optional, List, Union
 from datetime import datetime, timedelta
 import jwt
 import uuid
 import re
-from app.db import db_session
+import logging
+import os
+import asyncio
+from functools import wraps
+
+from app.db import db_session, query
 from app.models.user import User
 from app.models.invite import InviteCode
 from app.models.enums import VIPLevel, UserRole
-from functools import wraps
 
-auth_bp = Blueprint('auth', __name__, url_prefix='/auth')
+# 创建路由器
+router = APIRouter(prefix="/auth", tags=["用户认证"])
 
-# JWT 认证装饰器
-def token_required(f):
-    @wraps(f)
-    def decorated(*args, **kwargs):
-        token = None
-        
-        # 从请求头中获取token
-        if 'Authorization' in request.headers:
-            auth_header = request.headers['Authorization']
-            if auth_header.startswith('Bearer '):
-                token = auth_header.split(' ')[1]
-        
-        if not token:
-            return jsonify({'error': 'Token is missing'}), 401
-            
-        try:
-            # 解码token
-            print(f"\n===== TOKEN VERIFICATION =====\nToken: {token[:20]}...")
-            data = jwt.decode(token, current_app.config['SECRET_KEY'], algorithms=['HS256'])
-            print(f"Decoded token data: {data}")
-            
-            # 检查是否有最近登录的用户ID作为参考
-            last_user_id = current_app.config.get('LAST_LOGGED_IN_USER_ID')
-            if last_user_id:
-                print(f"Last logged in user ID: {last_user_id}")
-            
-            from app.db import query
-            # 使用正确的ID字段查询用户
-            user_id = data.get('user_id')
-            print(f"Searching for user with ID: {user_id}")
-            
-            # 尝试直接使用ID查询
-            users = query('users', {'id': user_id})
-            print(f"Query result: {users}")
-            
-            # 如果没有找到用户，尝试使用邮箱查询
-            if not users or len(users) == 0:
-                print("User not found by ID, trying to find by email from localStorage...")
-                # 尝试使用最近登录的用户邮箱查询
-                email_from_token = data.get('email')
-                if email_from_token:
-                    users = query('users', {'email': email_from_token})
-                    print(f"Query by email result: {users}")
-            
-            # 如果仍然没有找到用户，尝试直接使用ID查询
-            if not users or len(users) == 0:
-                print("User not found by email, trying direct ID lookup...")
-                try:
-                    # 尝试直接使用ID查询
-                    from app.db import run_async
-                    direct_id = user_id.split(':')[1] if ':' in user_id else user_id
-                    print(f"Attempting direct database query for ID: {direct_id}")
-                    
-                    # 尝试使用直接查询
-                    # 使用已经定义的query函数
-                    direct_result = query(user_id, {})
-                    print(f"Direct query result: {direct_result}")
-                    
-                    if direct_result and len(direct_result) > 0:
-                        users = [direct_result[0]]
-                except Exception as e:
-                    print(f"Error in direct ID lookup: {e}")
-            
-            # 如果仍然没有找到用户，尝试查询所有用户
-            if not users or len(users) == 0:
-                print("User not found, listing all users for debugging...")
-                all_users = query('users', {})
-                
-                # 如果有用户，尝试匹配用户ID
-                if all_users and len(all_users) > 0:
-                    print(f"Found {len(all_users)} users in database")
-                    # 尝试匹配用户ID的后缀部分
-                    if ':' in user_id:
-                        id_suffix = user_id.split(':')[1]
-                        for u in all_users:
-                            if u.get('id', '').endswith(id_suffix):
-                                print(f"Found matching user by ID suffix: {u.get('id')}")
-                                users = [u]
-                                break
-                
-                if not users or len(users) == 0:
-                    print(f"All users: {all_users[:2]}... (total: {len(all_users)})")
-                    # 如果有用户但没有匹配到，使用第一个用户作为回退
-                    if all_users and len(all_users) > 0:
-                        print("Using first user as fallback")
-                        users = [all_users[0]]
-                        # 更新token中的用户ID以便于下次验证
-                        current_app.config['LAST_LOGGED_IN_USER_ID'] = users[0].get('id')
-                    else:
-                        return jsonify({'error': 'No users found in database'}), 401
-            
-            current_user = users[0]
-            print(f"User found: {current_user.get('email')}")
-            print("Token verification successful!")
-            
-            # 更新最近验证成功的用户ID
-            current_app.config['LAST_LOGGED_IN_USER_ID'] = current_user.get('id')
-                
-        except jwt.ExpiredSignatureError:
-            return jsonify({'error': 'Token has expired'}), 401
-        except jwt.InvalidTokenError:
-            return jsonify({'error': 'Invalid token'}), 401
-            
-        return f(current_user, *args, **kwargs)
-    
-    return decorated
+# 配置 OAuth2 密码流
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/login")
+
+# 从环境变量获取 SECRET_KEY
+SECRET_KEY = os.environ.get("SECRET_KEY", "your-secret-key-for-jwt")
+ALGORITHM = "HS256"
+ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24 * 7  # 7 天
+
+# 定义请求和响应模型
+class UserRegister(BaseModel):
+    email: EmailStr
+    username: str
+    password: str
+    display_name: Optional[str] = None
+    invite_code: Optional[str] = None
+
+class UserLogin(BaseModel):
+    email: EmailStr
+    password: str
+
+class UserProfile(BaseModel):
+    email: str
+    username: str
+    display_name: Optional[str] = None
+    created_at: str
+    is_activated: bool
+    activation_status: str
+    roles: List[str]
+    vip_level: str
+    personal_invite_code: str
+    daily_chat_limit: int
+    weekly_invite_limit: int
+    ai_companions_limit: int
+
+class ProfileUpdate(BaseModel):
+    username: Optional[str] = None
+    display_name: Optional[str] = None
+
+class PasswordChange(BaseModel):
+    current_password: str
+    new_password: str
+
+class InviteCodeVerify(BaseModel):
+    code: str
+
+class InviteCodeResponse(BaseModel):
+    valid: bool
+    type: Optional[str] = None
+    benefits: Optional[Dict[str, Any]] = None
+    error: Optional[str] = None
+
+class SystemInviteCodeCreate(BaseModel):
+    max_uses: Optional[int] = None
+    expires_days: Optional[int] = None
+    benefits: Optional[Dict[str, Any]] = None
+
+class TokenResponse(BaseModel):
+    access_token: str
+    token_type: str = "bearer"
+    user: Dict[str, Any]
 
 # 验证邮箱格式
-def is_valid_email(email):
-    email_pattern = re.compile(r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$')
-    return bool(email_pattern.match(email))
+def is_valid_email(email: str) -> bool:
+    return re.match(r"[^@]+@[^@]+\.[^@]+", email) is not None
 
 # 验证密码强度
-def is_strong_password(password):
-    # 至少8个字符，包含大小写字母和数字
+def is_strong_password(password: str) -> bool:
+    """
+    验证密码强度:
+    - 至少8个字符
+    - 至少包含一个数字
+    - 至少包含一个大写字母
+    - 至少包含一个小写字母
+    """
     if len(password) < 8:
         return False
-    if not re.search(r'[A-Z]', password):
+    if not re.search(r"\d", password):
         return False
-    if not re.search(r'[a-z]', password):
+    if not re.search(r"[A-Z]", password):
         return False
-    if not re.search(r'[0-9]', password):
+    if not re.search(r"[a-z]", password):
         return False
     return True
 
 # 生成个人邀请码
-def generate_personal_invite_code():
-    return uuid.uuid4().hex[:8].upper()
+def generate_personal_invite_code() -> str:
+    return f"INV-{uuid.uuid4().hex[:8].upper()}"
 
-@auth_bp.route('/register', methods=['POST'])
-def register():
-    print("\n===== REGISTER REQUEST =====")
-    data = request.get_json()
-    print(f"Request data: {data}")
-    
-    # 验证必要字段
-    if not data or not data.get('email') or not data.get('password'):
-        print("Missing email or password")
-        return jsonify({'error': 'Email and password are required'}), 400
-        
-    email = data.get('email')
-    password = data.get('password')
-    invite_code = data.get('invite_code')
-    
-    # 验证邮箱格式
-    print(f"Validating email format: {email}")
-    if not is_valid_email(email):
-        print("Invalid email format")
-        return jsonify({'error': 'Invalid email format'}), 400
-        
-    # 验证密码强度
-    print("Validating password strength")
-    if not is_strong_password(password):
-        print("Password strength validation failed")
-        return jsonify({'error': 'Password must be at least 8 characters and include uppercase, lowercase letters and numbers'}), 400
-        
-    # 检查邮箱是否已存在
-    # 使用我们的数据库接口查询用户
-    print("Checking if email already exists")
-    from app.db import query, create
-    try:
-        existing_users = query('users', {'email': email})
-        print(f"Query result: {existing_users}")
-        if existing_users and len(existing_users) > 0:
-            print("Email already registered")
-            return jsonify({'error': 'Email already registered'}), 400
-    except Exception as e:
-        print(f"Error querying users: {str(e)}")
-        return jsonify({'error': 'Database error'}), 500
-    
-    # 生成个人邀请码
-    personal_invite_code = generate_personal_invite_code()
-    
-    # 准备用户数据
-    # 生成密码哈希
-    password_hash = generate_password_hash(password, method='pbkdf2:sha256', salt_length=8)
-    # 确保密码哈希是字符串形式
-    password_hash_str = str(password_hash)
-    print(f"\n===== REGISTRATION =====\nGenerated password hash: {password_hash_str}\nHash type: {type(password_hash_str)}")
-    
-    # 为了测试目的，使用一个固定的密码哈希
-    test_hash = 'pbkdf2:sha256:1000000$z8nsT3b8WNRx2zOT$4ef3c9bc7779a0fa19b07967527895d7b5234bec2eb0b4447c20369c0dfa61b4'
-    
-    user_data = {
-        'email': email,
-        'username': data.get('username') or email.split('@')[0],
-        'display_name': data.get('display_name') or data.get('username') or email.split('@')[0],
-        'created_at': datetime.utcnow().isoformat(),
-        'password_hash': test_hash,  # 使用测试哈希值，对应密码 '123456'
-        'personal_invite_code': personal_invite_code,
-        'vip_level': 'free',
-        'roles': ['normal'],
-        'is_activated': True,  # 简化流程，默认激活
-        'activation_status': 'active',
-        'daily_chat_limit': 10,
-        'ai_companions_limit': 1,
-        'weekly_invite_limit': 10
-    }
-    
-    # 处理邀请码
-    if invite_code:
-        # 查询邀请码
-        invites = query('invite_codes', {'code': invite_code})
-        if invites and len(invites) > 0:
-            invite = invites[0]
-            # 简化的邀请码验证
-            is_valid = True  # 假设邀请码有效
-            
-            if is_valid:
-                # 使用邀请码
-                user_data['invite_code_used'] = invite_code
-                
-                # 如果是系统邀请码且有特权，应用特权
-                if invite.get('type') == 'system' and invite.get('benefits'):
-                    benefits = invite.get('benefits', {})
-                    if 'vip_level' in benefits:
-                        user_data['vip_level'] = benefits['vip_level']
-                        # 设置VIP过期时间
-                        if 'vip_duration_days' in benefits:
-                            vip_days = benefits.get('vip_duration_days', 30)
-                            user_data['vip_expiry'] = (datetime.utcnow() + timedelta(days=vip_days)).isoformat()
-    
-    # 创建用户
-    print("Creating new user with data:", {k: v for k, v in user_data.items() if k != 'password_hash'})
-    try:
-        # 尝试创建用户
-        new_user = create('users', user_data)
-        print(f"User created successfully: {new_user.get('id')}")
-        
-        # 生成JWT令牌
-        token_payload = {
-            'user_id': new_user.get('id'),
-            'exp': datetime.utcnow() + timedelta(days=7)  # 令牌有效期7天
-        }
-        print(f"Token payload: {token_payload}")
-        
-        try:
-            token = jwt.encode(token_payload, current_app.config['SECRET_KEY'], algorithm='HS256')
-            print(f"Token generated: {token[:20]}...")
-            
-            # 将用户ID保存到本地变量中，以便调试
-            current_app.config['LAST_LOGGED_IN_USER_ID'] = new_user.get('id')
-            
-            return jsonify({
-                'message': 'Registration successful',
-                'token': token,
-                'user': new_user
-            }), 201
-        except Exception as token_err:
-            print(f"Error generating token: {str(token_err)}")
-            # 即使令牌生成失败，也返回用户创建成功的信息
-            return jsonify({
-                'message': 'Registration successful but token generation failed',
-                'user': new_user
-            }), 201
-    except Exception as e:
-        print(f"Error creating user: {str(e)}")
-        return jsonify({'error': f'Registration failed: {str(e)}'}), 500
+# 创建 JWT token
+def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
+    to_encode = data.copy()
+    if expires_delta:
+        expire = datetime.utcnow() + expires_delta
+    else:
+        expire = datetime.utcnow() + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+    to_encode.update({"exp": expire})
+    encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
+    return encoded_jwt
 
-@auth_bp.route('/login', methods=['POST'])
-def login():
-    print("\n===== LOGIN REQUEST =====")
-    data = request.get_json()
-    print(f"Request data: {data}")
-    
-    if not data or not data.get('email') or not data.get('password'):
-        print("Missing email or password")
-        return jsonify({'error': 'Email and password are required'}), 400
+# 用户认证依赖
+async def get_current_user(token: str = Depends(oauth2_scheme)):
+    credentials_exception = HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Could not validate credentials",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+    try:
+        # 解码 token
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        user_id = payload.get("user_id")
+        if user_id is None:
+            raise credentials_exception
+            
+        # 使用正确的ID字段查询用户
+        logging.info(f"Searching for user with ID: {user_id}")
         
-    email = data.get('email')
-    password = data.get('password')
-    print(f"Login attempt for email: {email}")
-    
-    # 查找用户
-    from app.db import query, update
-    print("Querying database for user...")
-    users = query('users', {'email': email})
-    print(f"Query result: {users}")
-    
-    if not users or len(users) == 0:
-        print("User not found")
-        return jsonify({'error': 'Invalid email or password'}), 401
+        # 尝试直接使用ID查询
+        users_result = query('users', {'id': user_id})
         
-    user = users[0]
-    print(f"User found: {user.get('email')}")
-    
-    # 验证密码
-    print("Verifying password...")
-    password_hash = user.get('password_hash', '')
-    print(f"Stored password hash: {password_hash}")
-    print(f"Input password: {password}")
-    
-    # 判断是否为测试账户或特殊格式的密码哈希
-    if password_hash == 'scrypt:32768' or password_hash == 'pbkdf2:sha256':
-        # 测试账户或特殊格式密码允许使用固定密码 '123456'
-        if password == '123456':
-            print("Special account login successful")
-            result = True
+        # Check if the result is a coroutine and await it if needed
+        if asyncio.iscoroutine(users_result):
+            users = await users_result
         else:
-            print("Special account login failed")
-            result = False
-    elif password_hash.startswith('pbkdf2:sha256:'):
-        # 正常 Werkzeug 格式的密码哈希
-        try:
-            result = check_password_hash(password_hash, password)
-            print(f"Password verification result: {result}")
-        except Exception as e:
-            print(f"Password verification error: {str(e)}")
-            return jsonify({'error': 'Authentication error'}), 500
-    else:
-        # 其他格式的密码验证
-        try:
-            result = check_password_hash(password_hash, password)
-            print(f"Password verification result: {result}")
-        except Exception as e:
-            print(f"Password verification error: {str(e)}")
-            # 如果验证出错，尝试直接比较密码（仅用于测试环境）
-            if password == '123456':
-                print("Fallback verification successful")
-                result = True
+            users = users_result
+        
+        # 如果没有找到用户，尝试使用邮箱查询
+        if not users or len(users) == 0:
+            logging.info("User not found by ID, trying to find by email...")
+            # 尝试使用最近登录的用户邮箱查询
+            email_from_token = payload.get("email")
+            logging.info(f"Trying email lookup for user: {payload.get('email')}")
+            users_result = query('users', {'email': payload.get('email')})
+            
+            # Check if the result is a coroutine and await it if needed
+            if asyncio.iscoroutine(users_result):
+                users = await users_result
             else:
-                return jsonify({'error': 'Authentication error'}), 500
-    
-    if not result:
-        print("Password verification failed")
-        return jsonify({'error': 'Invalid email or password'}), 401
-    print("Password verified successfully")
-    
-    # 更新最后登录时间
+                users = users_result
+        
+        # 如果仍然没有找到用户，尝试直接使用ID查询
+        if not users or len(users) == 0:
+            logging.info("User not found by email, trying direct ID lookup...")
+            try:
+                # 尝试直接使用ID查询
+                direct_id = user_id.split(':')[1] if ':' in user_id else user_id
+                logging.info(f"Attempting direct database query for ID: {direct_id}")
+                
+                # 尝试使用直接查询
+                direct_result_or_coroutine = query(user_id, {})
+                
+                # Check if the result is a coroutine and await it if needed
+                if asyncio.iscoroutine(direct_result_or_coroutine):
+                    direct_result = await direct_result_or_coroutine
+                else:
+                    direct_result = direct_result_or_coroutine
+                
+                if direct_result and len(direct_result) > 0:
+                    users = [direct_result[0]]
+            except Exception as e:
+                logging.error(f"Error in direct ID lookup: {e}")
+        
+        if not users or len(users) == 0:
+            raise credentials_exception
+            
+        user_data = users[0]
+        return user_data
+    except jwt.PyJWTError:
+        raise credentials_exception
+
+# 注册路由
+@router.post("/register", response_model=TokenResponse)
+async def register(user: UserRegister):
+    """
+    用户注册
+    """
     try:
-        update('users', user.get('id'), {'last_login': datetime.utcnow().isoformat()})
-    except Exception as e:
-        # 如果更新失败，不影响登录流程
-        print(f"Failed to update last_login: {str(e)}")
-    
-    # 生成JWT令牌
-    user_id = user.get('id')
-    print(f"\nGenerating token for user ID: {user_id}")
-    
-    # 确保用户ID存在于数据库中
-    from app.db import query
-    check_users = query('users', {'id': user_id})
-    print(f"Verifying user exists in database: {check_users}")
-    
-    if not check_users or len(check_users) == 0:
-        print(f"WARNING: User ID {user_id} not found in database during token generation!")
-    
-    token_payload = {
-        'user_id': user_id,
-        'exp': datetime.utcnow() + timedelta(days=7)  # 令牌有效期7天
-    }
-    print(f"Token payload: {token_payload}")
-    token = jwt.encode(token_payload, current_app.config['SECRET_KEY'], algorithm='HS256')
-    print(f"Generated token: {token[:20]}...")
-    
-    # 将用户ID保存到本地变量中，以便调试
-    current_app.config['LAST_LOGGED_IN_USER_ID'] = user_id
-    
-    return jsonify({
-        'message': 'Login successful',
-        'token': token,
-        'user': user
-    }), 200
-
-@auth_bp.route('/profile', methods=['GET'])
-@token_required
-def get_profile(current_user):
-    # 如果current_user是字典，直接返回；否则调用to_dict()
-    if isinstance(current_user, dict):
-        return jsonify(current_user), 200
-    else:
-        return jsonify(current_user.to_dict()), 200
-
-@auth_bp.route('/profile', methods=['PUT'])
-@token_required
-def update_profile(current_user):
-    data = request.get_json()
-    
-    if not data:
-        return jsonify({'error': 'No data provided'}), 400
-    
-    # 如果current_user是字典，直接更新字典字段
-    if isinstance(current_user, dict):
-        # 更新可编辑字段
-        editable_fields = ['username', 'display_name', 'avatar_url', 'bio']
-        for field in editable_fields:
-            if field in data:
-                current_user[field] = data[field]
-        
-        # 使用数据库接口更新用户数据
-        from app.db import update
-        update('users', current_user['id'], current_user)
-        
-        return jsonify({
-            'message': 'Profile updated successfully',
-            'user': current_user
-        }), 200
-    else:
-        # 原来的对象处理方式
-        editable_fields = ['username', 'display_name', 'avatar_url', 'bio']
-        for field in editable_fields:
-            if field in data:
-                setattr(current_user, field, data[field])
-        
-        db_session.commit()
-        
-        return jsonify({
-            'message': 'Profile updated successfully',
-            'user': current_user.to_dict()
-        }), 200
-
-@auth_bp.route('/change-password', methods=['POST'])
-@token_required
-def change_password(current_user):
-    data = request.get_json()
-    
-    if not data or not data.get('current_password') or not data.get('new_password'):
-        return jsonify({'error': 'Current password and new password are required'}), 400
-        
-    current_password = data.get('current_password')
-    new_password = data.get('new_password')
-    
-    # 验证当前密码
-    if not current_user.check_password(current_password):
-        return jsonify({'error': 'Current password is incorrect'}), 401
-        
-    # 验证新密码强度
-    if not is_strong_password(new_password):
-        return jsonify({'error': 'New password must be at least 8 characters and include uppercase, lowercase letters and numbers'}), 400
-        
-    # 更新密码
-    current_user.set_password(new_password)
-    db_session.commit()
-    
-    return jsonify({'message': 'Password changed successfully'}), 200
-
-@auth_bp.route('/invite-codes', methods=['GET'])
-@token_required
-def get_invite_codes(current_user):
-    # 获取用户创建的邀请码
-    invite_codes = InviteCode.query.filter_by(creator_id=current_user.id).all()
-    return jsonify({
-        'personal_invite_code': current_user.personal_invite_code,
-        'invite_codes': [code.to_dict() for code in invite_codes]
-    }), 200
-
-@auth_bp.route('/verify-invite-code', methods=['POST'])
-def verify_invite_code():
-    data = request.get_json()
-    
-    if not data or not data.get('code'):
-        return jsonify({'error': 'Invite code is required'}), 400
-        
-    code = data.get('code')
-    
-    # 查找邀请码
-    invite = InviteCode.query.filter_by(code=code).first()
-    
-    if not invite:
-        return jsonify({'valid': False, 'error': 'Invite code not found'}), 404
-        
-    if not invite.is_valid():
-        return jsonify({'valid': False, 'error': 'Invite code is invalid or expired'}), 400
-        
-    # 返回邀请码信息
-    return jsonify({
-        'valid': True,
-        'type': invite.type,
-        'benefits': invite.benefits
-    }), 200
-
-# 创建测试用户路由 - 仅用于测试目的
-@auth_bp.route('/create-test-user', methods=['GET'])
-def create_test_user():
-    from app.db import create, query
-    
-    # 检查测试用户是否已存在
-    print("Checking if test user exists...")
-    test_email = 'test@example.com'
-    users = query('users', {'email': test_email})
-    print(f"Query result for test user: {users}")
-    
-    if users and len(users) > 0:
-        print("Test user already exists")
-        user = users[0]
-    else:
-        print("Creating test user...")
+        # 验证邮箱格式
+        if not is_valid_email(user.email):
+            raise HTTPException(status_code=400, detail="Invalid email format")
+            
+        # 验证密码强度
+        if not is_strong_password(user.password):
+            raise HTTPException(
+                status_code=400, 
+                detail="Password must be at least 8 characters and contain uppercase, lowercase, and numbers"
+            )
+            
+        # 检查邮箱是否已存在
+        existing_users = query('users', {'email': user.email})
+        if existing_users and len(existing_users) > 0:
+            raise HTTPException(status_code=400, detail="Email already registered")
+            
+        # 检查用户名是否已存在
+        existing_usernames = query('users', {'username': user.username})
+        if existing_usernames and len(existing_usernames) > 0:
+            raise HTTPException(status_code=400, detail="Username already taken")
+            
+        # 验证邀请码（如果提供）
+        invite_benefits = {}
+        if user.invite_code:
+            # 查找邀请码
+            invites = query('invite_code', {'code': user.invite_code})
+            
+            if not invites or len(invites) == 0:
+                raise HTTPException(status_code=400, detail="Invalid invite code")
+                
+            invite = invites[0]
+            
+            # 检查邀请码是否有效
+            if invite.get('max_uses', 0) > 0 and invite.get('used_count', 0) >= invite.get('max_uses'):
+                raise HTTPException(status_code=400, detail="Invite code has reached maximum uses")
+                
+            if invite.get('expires_at') and datetime.fromisoformat(invite.get('expires_at')) < datetime.utcnow():
+                raise HTTPException(status_code=400, detail="Invite code has expired")
+                
+            # 获取邀请码提供的权益
+            invite_benefits = invite.get('benefits', {})
+            
+            # 更新邀请码使用次数
+            from app.db import update as db_update
+            db_update('invite_code', invite.get('id'), {'used_count': invite.get('used_count', 0) + 1})
+            
         # 生成密码哈希
         from werkzeug.security import generate_password_hash
-        password_hash = generate_password_hash('Test123456', method='pbkdf2:sha256', salt_length=8)
+        password_hash = generate_password_hash(user.password, method='pbkdf2:sha256', salt_length=8)
         
         # 准备用户数据
         user_data = {
-            'email': test_email,
-            'username': 'testuser',
-            'display_name': 'Test User',
+            'email': user.email,
+            'username': user.username,
+            'display_name': user.display_name or user.username,
             'password_hash': password_hash,
             'created_at': datetime.utcnow().isoformat(),
             'is_activated': True,
             'activation_status': 'active',
             'roles': ['normal'],
-            'vip_level': 'free',
+            'vip_level': invite_benefits.get('vip_level', 'free'),
             'personal_invite_code': generate_personal_invite_code(),
-            'daily_chat_limit': 10,
-            'weekly_invite_limit': 10,
-            'ai_companions_limit': 1
+            'daily_chat_limit': invite_benefits.get('daily_chat_limit', 10),
+            'weekly_invite_limit': invite_benefits.get('weekly_invite_limit', 10),
+            'ai_companions_limit': invite_benefits.get('ai_companions_limit', 1)
         }
         
         # 创建用户
-        try:
-            user = create('users', user_data)
-            print(f"Test user created: {user}")
-        except Exception as e:
-            print(f"Error creating test user: {e}")
-            return jsonify({'error': f'Failed to create test user: {str(e)}'}), 500
-    
-    # 返回用户信息和登录凭证
-    token_payload = {
-        'user_id': user.get('id'),
-        'exp': datetime.utcnow() + timedelta(days=7)
-    }
-    token = jwt.encode(token_payload, current_app.config['SECRET_KEY'], algorithm='HS256')
-    
-    return jsonify({
-        'message': 'Test user created/retrieved successfully',
-        'user': user,
-        'token': token,
-        'login_info': {
-            'email': test_email,
-            'password': 'Test123456'
+        from app.db import create
+        result = create('users', user_data)
+        
+        if not result:
+            raise HTTPException(status_code=500, detail="Failed to create user")
+            
+        # 生成 JWT token
+        token_data = {
+            "user_id": result.get('id'),
+            "email": user.email
         }
-    }), 200
+        access_token = create_access_token(token_data)
+        
+        # 返回用户信息和认证令牌
+        return {
+            "access_token": access_token,
+            "token_type": "bearer",
+            "user": result
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logging.error(f"Error during registration: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Registration failed: {str(e)}")
 
-# 管理员路由 - 创建系统邀请码
-@auth_bp.route('/admin/create-invite-code', methods=['POST'])
-@token_required
-def create_system_invite_code(current_user):
-    # 验证管理员权限
-    if not current_user.has_role(UserRole.admin):
-        return jsonify({'error': 'Unauthorized'}), 403
+# 登录路由
+@router.post("/login", response_model=TokenResponse)
+async def login(form_data: OAuth2PasswordRequestForm = Depends()):
+    """
+    用户登录
+    """
+    try:
+        # 查询用户
+        users_result = query('users', {'email': form_data.username})
         
-    data = request.get_json()
-    
-    if not data:
-        return jsonify({'error': 'No data provided'}), 400
+        # Check if the result is a coroutine and await it if needed
+        if asyncio.iscoroutine(users_result):
+            users = await users_result
+        else:
+            users = users_result
         
-    # 解析参数
-    max_uses = data.get('max_uses')
-    expires_days = data.get('expires_days')
-    benefits = data.get('benefits')
+        if not users or len(users) == 0:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Incorrect email or password",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+            
+        user = users[0]
+        
+        # 验证密码
+        from werkzeug.security import check_password_hash
+        if not check_password_hash(user.get('password_hash', ''), form_data.password):
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Incorrect email or password",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+            
+        # 生成 JWT token
+        token_data = {
+            "user_id": user.get('id'),
+            "email": user.get('email')
+        }
+        access_token = create_access_token(token_data)
+        
+        # 返回用户信息和认证令牌
+        return {
+            "access_token": access_token,
+            "token_type": "bearer",
+            "user": user
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logging.error(f"Error during login: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Login failed: {str(e)}")
+
+# 获取用户资料
+@router.get("/profile", response_model=Dict[str, Any])
+async def get_profile(current_user: Dict[str, Any] = Depends(get_current_user)):
+    """
+    获取当前登录用户的资料
+    """
+    return current_user
+
+# 更新用户资料
+@router.put("/profile", response_model=Dict[str, Any])
+async def update_profile(profile: ProfileUpdate, current_user: Dict[str, Any] = Depends(get_current_user)):
+    """
+    更新当前登录用户的资料
+    """
+    try:
+        update_data = {}
+        
+        # 检查用户名是否已存在
+        if profile.username and profile.username != current_user.get('username'):
+            existing_usernames = query('users', {'username': profile.username})
+            if existing_usernames and len(existing_usernames) > 0:
+                raise HTTPException(status_code=400, detail="Username already taken")
+            update_data['username'] = profile.username
+            
+        # 更新显示名
+        if profile.display_name:
+            update_data['display_name'] = profile.display_name
+            
+        if not update_data:
+            return current_user
+            
+        # 更新用户资料
+        from app.db import update as db_update
+        result = db_update('users', current_user.get('id'), update_data)
+        
+        if not result:
+            raise HTTPException(status_code=500, detail="Failed to update profile")
+            
+        # 返回更新后的用户信息
+        users = query('users', {'id': current_user.get('id')})
+        if not users or len(users) == 0:
+            raise HTTPException(status_code=404, detail="User not found")
+            
+        return users[0]
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logging.error(f"Error updating profile: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to update profile: {str(e)}")
+
+# 修改密码
+@router.put("/change-password", response_model=Dict[str, str])
+async def change_password(password_data: PasswordChange, current_user: Dict[str, Any] = Depends(get_current_user)):
+    """
+    修改当前登录用户的密码
+    """
+    try:
+        # 验证当前密码
+        from werkzeug.security import check_password_hash, generate_password_hash
+        if not check_password_hash(current_user.get('password_hash', ''), password_data.current_password):
+            raise HTTPException(status_code=400, detail="Current password is incorrect")
+            
+        # 验证新密码强度
+        if not is_strong_password(password_data.new_password):
+            raise HTTPException(
+                status_code=400, 
+                detail="Password must be at least 8 characters and contain uppercase, lowercase, and numbers"
+            )
+            
+        # 生成新密码哈希
+        new_password_hash = generate_password_hash(password_data.new_password, method='pbkdf2:sha256', salt_length=8)
+        
+        # 更新密码
+        from app.db import update as db_update
+        result = db_update('users', current_user.get('id'), {'password_hash': new_password_hash})
+        
+        if not result:
+            raise HTTPException(status_code=500, detail="Failed to update password")
+            
+        return {"message": "Password updated successfully"}
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logging.error(f"Error changing password: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to change password: {str(e)}")
+
+# 获取邀请码
+@router.get("/invite-codes", response_model=Dict[str, Any])
+async def get_invite_codes(current_user: Dict[str, Any] = Depends(get_current_user)):
+    """
+    获取当前用户的邀请码
+    """
+    # 查询用户创建的邀请码
+    invite_codes = query('invite_code', {'creator_id': current_user.get('id')})
     
-    expires_at = None
-    if expires_days:
-        expires_at = datetime.utcnow() + timedelta(days=expires_days)
-    
-    # 创建系统邀请码
-    invite = InviteCode.create_system_code(
-        max_uses=max_uses,
-        expires_at=expires_at,
-        benefits=benefits
-    )
-    
-    db_session.commit()
-    
-    return jsonify({
-        'message': 'System invite code created successfully',
-        'invite_code': invite.to_dict()
-    }), 201
+    return {
+        'personal_invite_code': current_user.get('personal_invite_code'),
+        'invite_codes': invite_codes or []
+    }
+
+# 验证邀请码
+@router.post("/verify-invite-code", response_model=InviteCodeResponse)
+async def verify_invite_code(invite_data: InviteCodeVerify):
+    """
+    验证邀请码是否有效
+    """
+    try:
+        # 查找邀请码
+        invites = query('invite_code', {'code': invite_data.code})
+        
+        if not invites or len(invites) == 0:
+            return {"valid": False, "error": "Invite code not found"}
+            
+        invite = invites[0]
+        
+        # 检查邀请码是否有效
+        if invite.get('max_uses', 0) > 0 and invite.get('used_count', 0) >= invite.get('max_uses'):
+            return {"valid": False, "error": "Invite code has reached maximum uses"}
+            
+        if invite.get('expires_at') and datetime.fromisoformat(invite.get('expires_at')) < datetime.utcnow():
+            return {"valid": False, "error": "Invite code has expired"}
+            
+        # 返回邀请码信息
+        return {
+            "valid": True,
+            "type": invite.get('type'),
+            "benefits": invite.get('benefits')
+        }
+        
+    except Exception as e:
+        logging.error(f"Error verifying invite code: {str(e)}")
+        return {"valid": False, "error": f"Failed to verify invite code: {str(e)}"}
+
+# 创建系统邀请码
+@router.post("/create-system-invite", response_model=Dict[str, Any])
+async def create_system_invite(invite_data: SystemInviteCodeCreate, current_user: Dict[str, Any] = Depends(get_current_user)):
+    """
+    管理员创建系统邀请码
+    """
+    try:
+        # 检查用户是否为管理员
+        if 'admin' not in current_user.get('roles', []):
+            raise HTTPException(status_code=403, detail="Only administrators can create system invites")
+            
+        # 准备邀请码数据
+        invite_code = f"SYS-{uuid.uuid4().hex[:8].upper()}"
+        expires_at = None
+        
+        if invite_data.expires_days:
+            expires_at = (datetime.utcnow() + timedelta(days=invite_data.expires_days)).isoformat()
+            
+        invite_data_dict = {
+            'code': invite_code,
+            'type': 'system',
+            'creator_id': current_user.get('id'),
+            'created_at': datetime.utcnow().isoformat(),
+            'max_uses': invite_data.max_uses or 1,
+            'used_count': 0,
+            'expires_at': expires_at,
+            'benefits': invite_data.benefits or {}
+        }
+        
+        # 创建邀请码
+        from app.db import create
+        result = create('invite_code', invite_data_dict)
+        
+        if not result:
+            raise HTTPException(status_code=500, detail="Failed to create invite code")
+            
+        return result
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logging.error(f"Error creating system invite: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to create system invite: {str(e)}")
+
+# 管理员获取所有用户
+@router.get("/admin/users", response_model=Dict[str, Any])
+async def get_all_users(current_user: Dict[str, Any] = Depends(get_current_user)):
+    """
+    管理员获取所有用户列表
+    """
+    try:
+        # 检查用户是否为管理员
+        if 'admin' not in current_user.get('roles', []):
+            raise HTTPException(status_code=403, detail="Only administrators can access this endpoint")
+            
+        # 查询所有用户
+        users = query('users', {})
+        
+        return {
+            'total': len(users),
+            'users': users
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logging.error(f"Error getting all users: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to get users: {str(e)}")
+
+# 管理员更新用户角色
+@router.put("/admin/users/{user_id}/roles", response_model=Dict[str, Any])
+async def update_user_roles(
+    user_id: str, 
+    roles: List[str], 
+    current_user: Dict[str, Any] = Depends(get_current_user)
+):
+    """
+    管理员更新用户角色
+    """
+    try:
+        # 检查用户是否为管理员
+        if 'admin' not in current_user.get('roles', []):
+            raise HTTPException(status_code=403, detail="Only administrators can update user roles")
+            
+        # 查询用户
+        users = query('users', {'id': user_id})
+        
+        if not users or len(users) == 0:
+            raise HTTPException(status_code=404, detail="User not found")
+            
+        # 更新用户角色
+        from app.db import update as db_update
+        result = db_update('users', user_id, {'roles': roles})
+        
+        if not result:
+            raise HTTPException(status_code=500, detail="Failed to update user roles")
+            
+        return result
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logging.error(f"Error updating user roles: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to update user roles: {str(e)}")
+
+# 管理员更新用户VIP级别
+@router.put("/admin/users/{user_id}/vip", response_model=Dict[str, Any])
+async def update_user_vip(
+    user_id: str, 
+    vip_level: str, 
+    current_user: Dict[str, Any] = Depends(get_current_user)
+):
+    """
+    管理员更新用户VIP级别
+    """
+    try:
+        # 检查用户是否为管理员
+        if 'admin' not in current_user.get('roles', []):
+            raise HTTPException(status_code=403, detail="Only administrators can update user VIP level")
+            
+        # 检查VIP级别是否有效
+        if vip_level not in [level.value for level in VIPLevel]:
+            raise HTTPException(status_code=400, detail=f"Invalid VIP level: {vip_level}")
+            
+        # 查询用户
+        users = query('users', {'id': user_id})
+        
+        if not users or len(users) == 0:
+            raise HTTPException(status_code=404, detail="User not found")
+            
+        # 更新用户VIP级别
+        from app.db import update as db_update
+        result = db_update('users', user_id, {'vip_level': vip_level})
+        
+        if not result:
+            raise HTTPException(status_code=500, detail="Failed to update user VIP level")
+            
+        return result
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logging.error(f"Error updating user VIP level: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to update user VIP level: {str(e)}")

@@ -1,6 +1,6 @@
 import axios from 'axios';
 
-const API_URL = 'http://localhost:5000/vip/';
+const API_URL = 'http://localhost:5000/api/vip/';
 
 // 获取所有VIP套餐信息
 export const getVIPPlans = async () => {

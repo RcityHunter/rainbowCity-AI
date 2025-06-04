@@ -161,12 +161,21 @@ async def close_db():
 # 同步包装器，将异步操作转换为同步操作
 def run_async(async_func):
     """运行异步函数并返回结果"""
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
     try:
-        return loop.run_until_complete(async_func)
-    finally:
-        loop.close()
+        # Check if we're already in an event loop
+        loop = asyncio.get_running_loop()
+        # If we're in an event loop, we can't create a new one
+        # Instead, we should just return the coroutine directly
+        # The caller is responsible for awaiting it
+        return async_func
+    except RuntimeError:
+        # If we're not in an event loop, create a new one
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            return loop.run_until_complete(async_func)
+        finally:
+            loop.close()
 
 # 初始化数据库
 def init_db(app):
@@ -263,7 +272,17 @@ def query(table, condition=None):
             print(f"Error processing query result: {e}")
             return []
     
-    return run_async(_query())
+    result_or_coroutine = run_async(_query())
+    
+    # Check if the result is a coroutine (when called from an async context)
+    if asyncio.iscoroutine(result_or_coroutine):
+        # If it's a coroutine, we need to mark this function as async
+        # This is a bit of a hack, but it works for FastAPI routes
+        # The caller must await this result
+        return result_or_coroutine
+    else:
+        # If it's not a coroutine, it's already been executed and we can return it directly
+        return result_or_coroutine
 
 # 同步更新数据
 def update(table, id, data):

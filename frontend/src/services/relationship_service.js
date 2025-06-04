@@ -1,7 +1,7 @@
 // frontend-new/src/services/relationship_service.js
 import axios from 'axios';
 
-const API_URL = 'http://localhost:5000/relationships';
+const API_URL = 'http://localhost:5000/api/relationships';
 
 /**
  * 创建新的AI与人类之间的关系

@@ -47,9 +47,10 @@ Rainbow City（彩虹城）是一个创新的AI交互平台，集成了一体七
 - 多模态交互界面
 
 ### 后端
-- Python + Flask
-- Node.js + Express.js
+- Python + FastAPI
 - RESTful API设计
+- OAuth2 认证机制
+- Pydantic 数据验证
 - 数据持久化存储
 - 大语言模型集成（OpenAI API）
 - 多模态输入处理（文本、图片、文档等）
@@ -73,7 +74,7 @@ Rainbow City（彩虹城）是一个创新的AI交互平台，集成了一体七
 2. 安装依赖
    ```bash
    # 安装前端依赖
-   cd frontend-new
+   cd frontend
    npm install
    
    # 安装后端依赖
@@ -92,13 +93,13 @@ Rainbow City（彩虹城）是一个创新的AI交互平台，集成了一体七
    python run.py
    
    # 在另一个终端启动前端服务
-   cd frontend-new
+   cd frontend
    npm start
    ```
 
 5. 访问应用
    - 前端: http://localhost:3000
-   - 后端API: http://localhost:5000
+   - 后端API: http://localhost:5000/api
 
 ## 使用指南
 
@@ -153,6 +154,161 @@ Rainbow City（彩虹城）是一个创新的AI交互平台，集成了一体七
 - **工具调用能力**：支持动态注册和调用外部工具，实现功能扩展
 - **完整的对话上下文管理**：支持多轮对话和上下文保持
 - **详细的事件日志**：记录用户输入、LLM调用、工具调用等完整交互过程
+
+## API 调用指南
+
+彩虹城AI系统提供了一套完整的RESTful API，基于FastAPI实现。所有API路由都以`/api`为前缀，采用OAuth2 Bearer Token认证机制。
+
+### 认证API
+
+#### 用户注册
+```
+POST /api/auth/register
+Content-Type: application/json
+
+{
+  "email": "user@example.com",
+  "username": "username",
+  "password": "StrongPassword123",
+  "display_name": "Display Name",
+  "invite_code": "INV-XXXXXXXX" (可选)
+}
+```
+
+#### 用户登录
+```
+POST /api/auth/login
+Content-Type: application/x-www-form-urlencoded
+
+username=user@example.com&password=StrongPassword123
+```
+
+响应：
+```json
+{
+  "access_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+  "token_type": "bearer",
+  "user": {
+    "id": "user_id",
+    "email": "user@example.com",
+    "username": "username",
+    "display_name": "Display Name"
+  }
+}
+```
+
+### AI聊天API
+
+#### 发送聊天消息
+```
+POST /api/chat
+Authorization: Bearer <access_token>
+Content-Type: application/json
+
+{
+  "session_id": "session_uuid",
+  "turn_id": "turn_uuid",
+  "messages": [
+    {"role": "user", "content": "你好，请介绍一下彩虹城"}
+  ],
+  "user_id": "user_id",
+  "ai_id": "ai_rainbow_city"
+}
+```
+
+#### 带文件的聊天请求
+```
+POST /api/chat/agent/with_file
+Authorization: Bearer <access_token>
+Content-Type: multipart/form-data
+
+user_input: "这张图片是什么？"
+session_id: "session_uuid"
+user_id: "user_id"
+ai_id: "ai_rainbow_city"
+image: [二进制图片文件]
+```
+
+### AI-ID和频率编号API
+
+#### 生成AI-ID
+```
+POST /api/ai/generate_id
+Authorization: Bearer <access_token>
+Content-Type: application/json
+
+{}
+```
+
+#### 生成频率编号
+```
+POST /api/ai/generate_frequency
+Authorization: Bearer <access_token>
+Content-Type: application/json
+
+{
+  "ai_id": "AI-XXXXXXXX",
+  "awakener_id": "user123",
+  "values": {
+    "care": 7,
+    "authenticity": 8,
+    "autonomy": 6,
+    "collaboration": 9,
+    "evolution": 7,
+    "innovation": 8,
+    "responsibility": 9
+  },
+  "personality_type": "INFJ",
+  "ai_type": "companion"
+}
+```
+
+### 关系管理API
+
+#### 获取关系列表
+```
+GET /api/relationships
+Authorization: Bearer <access_token>
+```
+
+#### 建立新关系
+```
+POST /api/relationships
+Authorization: Bearer <access_token>
+Content-Type: application/json
+
+{
+  "ai_id": "AI-XXXXXXXX",
+  "user_id": "user_id",
+  "relationship_type": "companion",
+  "strength": 5
+}
+```
+
+### 对话管理API
+
+#### 获取对话列表
+```
+GET /api/conversations
+Authorization: Bearer <access_token>
+```
+
+#### 创建新对话
+```
+POST /api/conversations
+Authorization: Bearer <access_token>
+Content-Type: application/json
+
+{
+  "id": "conversation_uuid",
+  "title": "新对话",
+  "preview": "对话预览内容",
+  "messages": [
+    {"role": "user", "content": "你好"}
+  ],
+  "userId": "user_id"
+}
+```
 
 ## Agent系统架构
 

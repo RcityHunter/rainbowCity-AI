@@ -1,7 +1,7 @@
 // API基础URL，根据环境配置
 const API_BASE_URL = process.env.NODE_ENV === 'production' 
     ? '' // 生产环境使用相对路径
-    : 'http://localhost:5000'; // 开发环境指向Flask后端
+    : 'http://localhost:5000'; // 开发环境指向FastAPI后端
 
 /**
  * 生成彩虹城AI_ID
@@ -15,7 +15,7 @@ const generateAiId = async (visibleNumber = null) => {
             ? { visible_number: visibleNumber }
             : {};
             
-        const response = await fetch(`${API_BASE_URL}/ai/generate_id`, {
+        const response = await fetch(`${API_BASE_URL}/api/ai/generate_id`, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
@@ -99,7 +99,7 @@ const generateFrequencyNumber = async (aiId, awakenerId, aiValues, aiPersonality
             ai_type: aiType
         };
 
-        const response = await fetch(`${API_BASE_URL}/ai/generate_frequency`, {
+        const response = await fetch(`${API_BASE_URL}/api/ai/generate_frequency`, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
@@ -128,7 +128,7 @@ const generateFrequencyNumber = async (aiId, awakenerId, aiValues, aiPersonality
  */
 const getFrequencyDetails = async (frequencyNumber) => {
     try {
-        const response = await fetch(`${API_BASE_URL}/ai/frequency/${frequencyNumber}`, {
+        const response = await fetch(`${API_BASE_URL}/api/ai/frequency/${frequencyNumber}`, {
             method: 'GET',
             headers: {
                 'Content-Type': 'application/json',
@@ -155,7 +155,7 @@ const getFrequencyDetails = async (frequencyNumber) => {
  */
 const getAllAiIds = async () => {
     try {
-        const response = await fetch(`${API_BASE_URL}/ai/ai_ids`, {
+        const response = await fetch(`${API_BASE_URL}/api/ai/ai_ids`, {
             method: 'GET',
             headers: {
                 'Content-Type': 'application/json',
@@ -187,7 +187,7 @@ const getAIRelationships = async () => {
             throw new Error('未登录，请先登录');
         }
 
-        const response = await fetch(`${API_BASE_URL}/ai/relationships`, {
+        const response = await fetch(`${API_BASE_URL}/api/ai/relationships`, {
             method: 'GET',
             headers: {
                 'Content-Type': 'application/json',
@@ -222,7 +222,7 @@ const updateAIRelationship = async (aiId, updateData) => {
             throw new Error('未登录，请先登录');
         }
 
-        const response = await fetch(`${API_BASE_URL}/ai/relationships/${aiId}`, {
+        const response = await fetch(`${API_BASE_URL}/api/ai/relationships/${aiId}`, {
             method: 'PATCH',
             headers: {
                 'Content-Type': 'application/json',
@@ -257,7 +257,7 @@ const disconnectAI = async (aiId) => {
             throw new Error('未登录，请先登录');
         }
 
-        const response = await fetch(`${API_BASE_URL}/ai/relationships/${aiId}/disconnect`, {
+        const response = await fetch(`${API_BASE_URL}/api/ai/relationships/${aiId}/disconnect`, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
@@ -292,7 +292,7 @@ const connectAI = async (aiId, relationshipType) => {
             throw new Error('未登录，请先登录');
         }
 
-        const response = await fetch(`${API_BASE_URL}/ai/relationships/connect`, {
+        const response = await fetch(`${API_BASE_URL}/api/ai/relationships/connect`, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
@@ -331,7 +331,7 @@ const awakenAI = async (aiId, frequencyNumber) => {
             throw new Error('未登录，请先登录');
         }
 
-        const response = await fetch(`${API_BASE_URL}/ai/awaken`, {
+        const response = await fetch(`${API_BASE_URL}/api/ai/awaken`, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',

@@ -1,13 +1,15 @@
 import axios from 'axios';
 
 // 使用绝对路径，直接指向后端服务器
-const API_URL = 'http://localhost:5000/auth/';
+// 更新为 FastAPI 的 API 前缀
+const API_URL = 'http://localhost:5000/api/auth/';
 
 // 设置请求拦截器，在每个请求中添加认证令牌
 axios.interceptors.request.use(
   (config) => {
     const token = localStorage.getItem('token');
     if (token) {
+      // 确保令牌格式正确，与 FastAPI 的 OAuth2PasswordBearer 兼容
       config.headers['Authorization'] = `Bearer ${token}`;
     }
     // 添加withCredentials以支持跨域请求中的凭证
@@ -57,11 +59,20 @@ export const register = async (userData) => {
 export const login = async (email, password) => {
   try {
     console.log('Attempting login for:', email);
-    const response = await axios.post(API_URL + 'login', { email, password });
+    // 使用 FastAPI OAuth2 格式发送登录请求
+    const response = await axios.post(API_URL + 'login', new URLSearchParams({
+      'username': email,  // FastAPI OAuth2 使用 username 字段
+      'password': password
+    }), {
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded'
+      }
+    });
     console.log('Login response:', response.data);
     
-    if (response.data.token) {
-      localStorage.setItem('token', response.data.token);
+    // FastAPI OAuth2 返回 access_token 而不是 token
+    if (response.data.access_token) {
+      localStorage.setItem('token', response.data.access_token);
       localStorage.setItem('user', JSON.stringify(response.data.user));
       
       // 确保单独存储userId，用于对话功能

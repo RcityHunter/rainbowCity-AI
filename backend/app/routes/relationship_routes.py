@@ -1,9 +1,13 @@
 # backend/app/routes/relationship_routes.py
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 from datetime import datetime
 import uuid
+import logging
 
-from flask import Blueprint, jsonify, request, current_app, abort
+from fastapi import APIRouter, HTTPException, Depends, Request
+from fastapi.responses import JSONResponse
+from pydantic import BaseModel, Field
+
 from app.models.relationship import Relationship, RelationshipStatus
 from app.utils.relationship_utils import (
     calculate_interaction_frequency,
@@ -14,274 +18,259 @@ from app.utils.relationship_utils import (
 )
 from app.db import create, query, update as db_update
 
-relationship_bp = Blueprint("relationships", __name__, url_prefix="/relationships")
+# 创建路由器
+router = APIRouter(prefix="/relationships", tags=["关系管理"])
 
+# 定义请求和响应模型
+class RelationshipCreate(BaseModel):
+    ai_id: str = Field(..., description="AI ID")
+    human_id: str = Field(..., description="人类用户 ID")
+    relationship_id: Optional[str] = Field(None, description="关系 ID，如不提供将自动生成")
+    init_timestamp: Optional[str] = Field(None, description="初始化时间戳")
+    last_active_time: Optional[str] = Field(None, description="最后活跃时间")
+    status: Optional[str] = Field(None, description="关系状态")
+    
+class RelationshipCreateResponse(BaseModel):
+    message: str
+    relationship_id: str
+    
+class RelationshipStatusUpdate(BaseModel):
+    status: str = Field(..., description="新的关系状态")
+    
+class RelationshipStatusResponse(BaseModel):
+    status: str
+    
+class RelationshipUpdateResponse(BaseModel):
+    message: str
+    
+class RisComponent(BaseModel):
+    interaction_frequency: float
+    emotional_density: float
+    collaboration_depth: float
+    
+class RisResponse(BaseModel):
+    ris: float
+    components: RisComponent
 
-@relationship_bp.route("", methods=["POST"])
-def create_relationship() -> tuple:
+@router.post("", response_model=RelationshipCreateResponse, status_code=201)
+async def create_relationship(relationship: RelationshipCreate):
     """
-    Create a new relationship between an AI and a human.
-
-    Returns:
-        tuple: A tuple containing the JSON response and the HTTP status code.
+    创建一个新的 AI 与人类之间的关系
     """
     try:
-        data = request.get_json()
-        if not data:
-            return jsonify({"error": "No input data provided"}), 400
-
-        # Validate input data
-        required_fields = ["ai_id", "human_id"]
-        if not all(field in data for field in required_fields):
-            return jsonify({"error": f"Missing required fields: {required_fields}"}), 400
+        # 转换为字典以便处理
+        data = relationship.dict(exclude_unset=True)
+        
+        # 生成 relationship_id（如果未提供）
+        if "relationship_id" not in data or not data["relationship_id"]:
+            data["relationship_id"] = f"rel-{str(uuid.uuid4())}"
             
-        # Generate relationship_id if not provided
-        if "relationship_id" not in data:
-            data["relationship_id"] = f"rel-{str(uuid.uuid4())}" 
-            
-        # Set timestamps if not provided
+        # 设置时间戳（如果未提供）
         now = datetime.utcnow().isoformat()
-        if "init_timestamp" not in data:
+        if "init_timestamp" not in data or not data["init_timestamp"]:
             data["init_timestamp"] = now
-        if "last_active_time" not in data:
+        if "last_active_time" not in data or not data["last_active_time"]:
             data["last_active_time"] = now
             
-        # Set default values
-        if "status" not in data:
+        # 设置默认状态（如果未提供）
+        if "status" not in data or not data["status"]:
             data["status"] = RelationshipStatus.ACTIVE.value
             
-        # Store in SurrealDB
+        # 存储到 SurrealDB
         result = create('relationship', data)
         
         if result:
-            current_app.logger.info(f"Successfully created relationship: {data['relationship_id']}")
-            return jsonify({
+            logging.info(f"Successfully created relationship: {data['relationship_id']}")
+            return {
                 "message": "Relationship created", 
                 "relationship_id": data["relationship_id"]
-            }), 201
+            }
         else:
-            return jsonify({"error": "Failed to create relationship"}), 500
+            raise HTTPException(status_code=500, detail="Failed to create relationship")
             
     except Exception as e:
-        current_app.logger.error(f"Error creating relationship: {str(e)}")
-        return jsonify({"error": f"Failed to create relationship: {str(e)}"}), 500
+        logging.error(f"Error creating relationship: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to create relationship: {str(e)}")
 
-
-@relationship_bp.route("/<string:relationship_id>", methods=["GET"])
-def get_relationship(relationship_id: str) -> tuple:
+@router.get("/{relationship_id}", response_model=Dict[str, Any])
+async def get_relationship(relationship_id: str):
     """
-    Get details of a specific relationship.
-
+    获取特定关系的详细信息
+    
     Args:
-        relationship_id (str): The ID of the relationship.
-
-    Returns:
-        tuple: A tuple containing the JSON response and the HTTP status code.
+        relationship_id: 关系 ID
     """
     try:
-        # 查询SurrealDB
+        # 查询 SurrealDB
         results = query('relationship', {'relationship_id': relationship_id})
         
         # 处理查询结果
         if not results:
-            return jsonify({'error': 'Relationship not found'}), 404
+            raise HTTPException(status_code=404, detail="Relationship not found")
             
         # 返回找到的第一个匹配结果
-        return jsonify(results[0]), 200
+        return results[0]
         
+    except HTTPException:
+        raise
     except Exception as e:
-        current_app.logger.error(f"Error retrieving relationship: {str(e)}")
-        return jsonify({'error': f'Failed to retrieve relationship: {str(e)}'}), 500
+        logging.error(f"Error retrieving relationship: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to retrieve relationship: {str(e)}")
 
-
-@relationship_bp.route("/<string:relationship_id>", methods=["PUT"])
-def update_relationship(relationship_id: str) -> tuple:
+@router.put("/{relationship_id}", response_model=RelationshipUpdateResponse)
+async def update_relationship(relationship_id: str, data: Dict[str, Any]):
     """
-    Update details of a specific relationship.
-
+    更新特定关系的详细信息
+    
     Args:
-        relationship_id (str): The ID of the relationship.
-
-    Returns:
-        tuple: A tuple containing the JSON response and the HTTP status code.
+        relationship_id: 关系 ID
     """
     try:
-        data = request.get_json()
-        if not data:
-            return jsonify({"error": "No input data provided"}), 400
-
         # 首先查询关系是否存在
         results = query('relationship', {'relationship_id': relationship_id})
         if not results:
-            return jsonify({"error": "Relationship not found"}), 404
+            raise HTTPException(status_code=404, detail="Relationship not found")
             
-        # 更新时间戳格式（如果提供）
-        if "last_active_time" in data and data["last_active_time"] is not None:
-            try:
-                # 尝试解析时间戳，确保格式正确
-                datetime.fromisoformat(data["last_active_time"])
-            except ValueError:
-                # 如果格式不正确，使用当前时间
-                data["last_active_time"] = datetime.utcnow().isoformat()
-                
-        # 使用SurrealDB的更新函数
+        # 使用 SurrealDB 的更新函数更新关系
         result = db_update('relationship', relationship_id, data)
         
         if result:
-            current_app.logger.info(f"Successfully updated relationship: {relationship_id}")
-            return jsonify({"message": "Relationship updated"}), 200
+            logging.info(f"Successfully updated relationship: {relationship_id}")
+            return {"message": "Relationship updated"}
         else:
-            return jsonify({"error": "Failed to update relationship"}), 500
+            raise HTTPException(status_code=500, detail="Failed to update relationship")
             
+    except HTTPException:
+        raise
     except Exception as e:
-        current_app.logger.error(f"Error updating relationship: {str(e)}")
-        return jsonify({"error": f"Failed to update relationship: {str(e)}"}), 500
+        logging.error(f"Error updating relationship: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to update relationship: {str(e)}")
 
-
-@relationship_bp.route("/ais/<string:ai_id>", methods=["GET"])
-def get_ai_relationships(ai_id: str) -> tuple:
+@router.get("/ai/{ai_id}", response_model=List[Dict[str, Any]])
+async def get_ai_relationships(ai_id: str):
     """
-    Get all relationships for a specific AI.
-
+    获取特定 AI 的所有关系
+    
     Args:
-        ai_id (str): The ID of the AI.
-
-    Returns:
-        tuple: A tuple containing the JSON response and the HTTP status code.
+        ai_id: AI ID
     """
     try:
-        # 查询SurrealDB中与特定AI相关的所有关系
+        # 查询 SurrealDB
         results = query('relationship', {'ai_id': ai_id})
         
-        # 即使没有找到关系，也返回空列表而不是错误
-        return jsonify(results if results else []), 200
+        # 返回结果，可能是空列表
+        return results
         
     except Exception as e:
-        current_app.logger.error(f"Error retrieving AI relationships: {str(e)}")
-        return jsonify({'error': f'Failed to retrieve AI relationships: {str(e)}'}), 500
+        logging.error(f"Error retrieving AI relationships: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to retrieve AI relationships: {str(e)}")
 
-
-@relationship_bp.route("/users/<string:human_id>", methods=["GET"])
-def get_user_relationships(human_id: str) -> tuple:
+@router.get("/human/{human_id}", response_model=List[Dict[str, Any]])
+async def get_user_relationships(human_id: str):
     """
-    Get all relationships for a specific user.
-
+    获取特定用户的所有关系
+    
     Args:
-        human_id (str): The ID of the user.
-
-    Returns:
-        tuple: A tuple containing the JSON response and the HTTP status code.
+        human_id: 人类用户 ID
     """
     try:
-        # 查询SurrealDB中与特定用户相关的所有关系
+        # 查询 SurrealDB
         results = query('relationship', {'human_id': human_id})
         
-        # 即使没有找到关系，也返回空列表而不是错误
-        return jsonify(results if results else []), 200
+        # 返回结果，可能是空列表
+        return results
         
     except Exception as e:
-        current_app.logger.error(f"Error retrieving user relationships: {str(e)}")
-        return jsonify({'error': f'Failed to retrieve user relationships: {str(e)}'}), 500
+        logging.error(f"Error retrieving user relationships: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to retrieve user relationships: {str(e)}")
 
-
-@relationship_bp.route("/<string:relationship_id>/status", methods=["GET"])
-def get_relationship_status(relationship_id: str) -> tuple:
+@router.get("/{relationship_id}/status", response_model=RelationshipStatusResponse)
+async def get_relationship_status(relationship_id: str):
     """
-    Get the current status of a relationship.
-
+    获取关系的当前状态
+    
     Args:
-        relationship_id (str): The ID of the relationship.
-
-    Returns:
-        tuple: A tuple containing the JSON response and the HTTP status code.
+        relationship_id: 关系 ID
     """
     try:
-        # 查询SurrealDB
+        # 查询 SurrealDB
         results = query('relationship', {'relationship_id': relationship_id})
         
         # 处理查询结果
         if not results:
-            return jsonify({'error': 'Relationship not found'}), 404
+            raise HTTPException(status_code=404, detail="Relationship not found")
             
         # 返回状态信息
         relationship = results[0]
         if 'status' in relationship:
-            return jsonify({"status": relationship['status']}), 200
+            return {"status": relationship['status']}
         else:
             # 如果没有状态字段，默认为活跃状态
-            return jsonify({"status": RelationshipStatus.ACTIVE.value}), 200
+            return {"status": RelationshipStatus.ACTIVE.value}
         
+    except HTTPException:
+        raise
     except Exception as e:
-        current_app.logger.error(f"Error retrieving relationship status: {str(e)}")
-        return jsonify({'error': f'Failed to retrieve relationship status: {str(e)}'}), 500
+        logging.error(f"Error retrieving relationship status: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to retrieve relationship status: {str(e)}")
 
-
-@relationship_bp.route("/<string:relationship_id>/status", methods=["PUT"])
-def update_relationship_status_route(relationship_id: str) -> tuple:
+@router.put("/{relationship_id}/status", response_model=RelationshipUpdateResponse)
+async def update_relationship_status_route(relationship_id: str, status_update: RelationshipStatusUpdate):
     """
-    Update the status of a relationship.
-
+    更新关系的状态
+    
     Args:
-        relationship_id (str): The ID of the relationship.
-
-    Returns:
-        tuple: A tuple containing the JSON response and the HTTP status code.
+        relationship_id: 关系 ID
     """
     try:
-        data = request.get_json()
-        if not data or "status" not in data:
-            return jsonify({"error": "Missing 'status' in request data"}), 400
-
         # 验证状态是否有效
         try:
-            new_status = RelationshipStatus(data["status"])
+            new_status = RelationshipStatus(status_update.status)
             status_value = new_status.value
         except ValueError:
-            return jsonify({"error": f"Invalid status: {data['status']}"}), 400
+            raise HTTPException(status_code=400, detail=f"Invalid status: {status_update.status}")
 
         # 首先查询关系是否存在
         results = query('relationship', {'relationship_id': relationship_id})
         if not results:
-            return jsonify({"error": "Relationship not found"}), 404
+            raise HTTPException(status_code=404, detail="Relationship not found")
             
-        # 使用SurrealDB的更新函数更新状态
+        # 使用 SurrealDB 的更新函数更新状态
         update_data = {"status": status_value}
         result = db_update('relationship', relationship_id, update_data)
         
         if result:
-            current_app.logger.info(f"Successfully updated relationship status: {relationship_id} to {status_value}")
-            return jsonify({"message": "Relationship status updated"}), 200
+            logging.info(f"Successfully updated relationship status: {relationship_id} to {status_value}")
+            return {"message": "Relationship status updated"}
         else:
-            return jsonify({"error": "Failed to update relationship status"}), 500
+            raise HTTPException(status_code=500, detail="Failed to update relationship status")
             
+    except HTTPException:
+        raise
     except Exception as e:
-        current_app.logger.error(f"Error updating relationship status: {str(e)}")
-        return jsonify({"error": f"Failed to update relationship status: {str(e)}"}), 500
+        logging.error(f"Error updating relationship status: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to update relationship status: {str(e)}")
 
-
-@relationship_bp.route("/<string:relationship_id>/ris", methods=["GET"])
-def get_relationship_ris(relationship_id: str) -> tuple:
+@router.get("/{relationship_id}/ris", response_model=RisResponse)
+async def get_relationship_ris(relationship_id: str):
     """
-    Get the Relationship Intensity Score (RIS) for a relationship.
-
+    获取关系的强度评分 (RIS)
+    
     Args:
-        relationship_id (str): The ID of the relationship.
-
-    Returns:
-        tuple: A tuple containing the JSON response and the HTTP status code.
+        relationship_id: 关系 ID
     """
     try:
-        # 查询SurrealDB
+        # 查询 SurrealDB
         results = query('relationship', {'relationship_id': relationship_id})
         
         # 处理查询结果
         if not results:
-            return jsonify({'error': 'Relationship not found'}), 404
+            raise HTTPException(status_code=404, detail="Relationship not found")
             
         # 获取关系数据
         relationship = results[0]
         
-        # 计算RIS分数
+        # 计算 RIS 分数
         interaction_count = relationship.get('interaction_count', 0)
         emotional_resonance_count = relationship.get('emotional_resonance_count', 0)
         
@@ -292,15 +281,17 @@ def get_relationship_ris(relationship_id: str) -> tuple:
         ris = calculate_ris(interaction_frequency, emotional_density, collaboration_depth)
         
         # 返回结果以及各个组成部分的分数
-        return jsonify({
+        return {
             "ris": ris,
             "components": {
                 "interaction_frequency": interaction_frequency,
                 "emotional_density": emotional_density,
                 "collaboration_depth": collaboration_depth
             }
-        }), 200
+        }
         
+    except HTTPException:
+        raise
     except Exception as e:
-        current_app.logger.error(f"Error calculating relationship RIS: {str(e)}")
-        return jsonify({'error': f'Failed to calculate relationship RIS: {str(e)}'}), 500
+        logging.error(f"Error calculating relationship RIS: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to calculate relationship RIS: {str(e)}")
