@@ -260,15 +260,21 @@ function AiChat() {
     // 创建用户消息
     if (messageType === MessageType.MIXED) {
       // 混合消息（文本+图片）
-      userMessages.push(createMessage(
-        SenderRole.USER,
-        messageContent,
-        messageType,
-        messageData
-      ));
+      userMessages.push({
+        ...createMessage(
+          SenderRole.USER,
+          messageContent,
+          messageType,
+          messageData
+        ),
+        visible: true // 确保消息可见
+      });
     } else if (messageContent) {
       // 纯文本消息
-      userMessages.push(createMessage(SenderRole.USER, messageContent));
+      userMessages.push({
+        ...createMessage(SenderRole.USER, messageContent),
+        visible: true // 确保消息可见
+      });
     }
     
     // 保存图片附件到永久存储
@@ -371,12 +377,15 @@ function AiChat() {
       // 处理响应
       if (data.response) {
         // 创建助手消息
-        const assistantMessage = createMessage(
-          SenderRole.ASSISTANT, 
-          data.response.content || data.response,
-          data.response.type || MessageType.TEXT,
-          data.response.metadata || {}
-        );
+        const assistantMessage = {
+          ...createMessage(
+            SenderRole.ASSISTANT, 
+            data.response.content || data.response,
+            data.response.type || MessageType.TEXT,
+            data.response.metadata || {}
+          ),
+          visible: true // 确保消息可见
+        };
         
         // 如果有工具调用
         if (data.tool_calls && data.tool_calls.length > 0) {
@@ -388,36 +397,53 @@ function AiChat() {
           })));
           
           // 添加工具调用消息
-          const toolMessage = createMessage(
-            SenderRole.SYSTEM,
-            `正在使用工具: ${data.tool_calls.map(t => t.name).join(', ')}`,
-            MessageType.TOOL_OUTPUT,
-            { tool_calls: data.tool_calls }
-          );
+          const toolMessage = {
+            ...createMessage(
+              SenderRole.SYSTEM,
+              `正在使用工具: ${data.tool_calls.map(t => t.name).join(', ')}`,
+              MessageType.TOOL_OUTPUT,
+              { tool_calls: data.tool_calls }
+            ),
+            visible: true // 确保消息可见
+          };
           
-          setMessages(prev => {
-            const updatedMessages = [...prev, assistantMessage, toolMessage];
+          // 使用回调函数形式更新消息，确保基于最新的状态
+          setMessages(prevMessages => {
+            const updatedMessages = [...prevMessages, assistantMessage, toolMessage];
             
             // 如果用户已登录，自动保存对话
             if (isLoggedIn) {
-              // 使用setTimeout确保状态更新后再保存
-              setTimeout(async () => {
-                await saveConversation(updatedMessages, currentConversationId);
-              }, 100);
+              // 直接保存对话，不使用setTimeout
+              console.log('直接调用saveConversation保存对话...');
+              // 立即保存对话并等待完成
+              (async () => {
+                try {
+                  const savedId = await saveConversation(updatedMessages, currentConversationId);
+                  console.log('对话保存完成，ID:', savedId);
+                } catch (saveError) {
+                  console.error('保存对话时出错:', saveError);
+                }
+              })();
             }
             
             return updatedMessages;
           });
         } else {
-          setMessages(prev => {
-            const updatedMessages = [...prev, assistantMessage];
+          // 使用回调函数形式更新消息，确保基于最新的状态
+          setMessages(prevMessages => {
+            const updatedMessages = [...prevMessages, assistantMessage];
             
             // 如果用户已登录，自动保存对话
             if (isLoggedIn) {
-              // 使用setTimeout确保状态更新后再保存
-              setTimeout(async () => {
-                await saveConversation(updatedMessages, currentConversationId);
-              }, 100);
+              console.log('直接调用saveConversation保存对话...');
+              (async () => {
+                try {
+                  const savedId = await saveConversation(updatedMessages, currentConversationId);
+                  console.log('对话保存完成，ID:', savedId);
+                } catch (saveError) {
+                  console.error('保存对话时出错:', saveError);
+                }
+              })();
             }
             
             return updatedMessages;
@@ -433,6 +459,204 @@ function AiChat() {
       setError(err.message || String(err));
       
       // 添加错误消息
+  const errorMessage = createMessage(
+    SenderRole.SYSTEM,
+    `错误: ${err.message || '未知错误'}`,
+    MessageType.TEXT,
+    { error: true }
+  );
+  
+  setMessages(prev => [...prev, errorMessage]);
+  
+  // 如果发送失败，将最近使用的图片附件添加回附件列表
+  if (imageAttachment) {
+    setAttachments([imageAttachment]);
+  }
+} finally {
+  setIsLoading(false);
+}
+};
+
+// 处理工具调用
+const handleToolAction = (toolId, action) => {
+  // 如果是导航到其他页面
+  if (action === 'navigate') {
+    const toolRoutes = {
+      'frequency_generator': '/frequency-generator',
+      'ai_id_generator': '/ai-id-generator',
+      'relationship_manager': '/ai-relationships'
+    };
+    
+    if (toolRoutes[toolId]) {
+      navigate(toolRoutes[toolId]);
+    }
+  }
+  
+  // 清除活动工具
+  setActiveTools([]);
+};
+
+// 自动滚动到最新消息
+useEffect(() => {
+  if (messagesEndRef.current) {
+    messagesEndRef.current.scrollIntoView({ behavior: 'smooth' });
+  }
+}, [messages]);
+  
+// 保存对话到数据库
+const saveConversation = async (messageList, conversationId = null) => {
+  console.log('===== saveConversation 开始执行 =====');
+  console.log('传入参数: conversationId =', conversationId);
+  console.log('当前状态: currentConversationId =', currentConversationId);
+  
+  // 只有登录用户才保存对话
+  if (!isLoggedIn) {
+    console.log('未登录，不保存对话');
+    return null;
+  }
+  
+  // 确保至少有一条消息
+  if (!messageList || messageList.length === 0) {
+    console.log('没有消息，不保存对话');
+    return null;
+  }
+  
+  console.log('开始保存对话，当前对话ID:', conversationId || currentConversationId || '新对话');
+  console.log('消息列表长度:', messageList.length);
+  
+  try {
+    // 准备数据
+    console.log('开始处理消息数据...');
+    const visibleMessages = messageList.filter(msg => msg.visible !== false);
+    console.log('可见消息数量:', visibleMessages.length);
+    
+    const lastMessage = visibleMessages[visibleMessages.length - 1];
+    console.log('最后一条消息:', lastMessage ? `ID=${lastMessage.id}, 角色=${lastMessage.role}` : '无');
+    
+    let title = '新对话';
+    let preview = '';
+    
+    // 设置标题和预览
+    if (visibleMessages.length > 0) {
+      const firstUserMessage = visibleMessages.find(msg => msg.role === SenderRole.USER);
+      console.log('找到用户第一条消息:', firstUserMessage ? `ID=${firstUserMessage.id}` : '无');
+      
+      if (firstUserMessage && firstUserMessage.content) {
+        title = typeof firstUserMessage.content === 'string' 
+          ? firstUserMessage.content.substring(0, 30) + (firstUserMessage.content.length > 30 ? '...' : '')
+          : '新对话';
+      }
+      
+      if (lastMessage && lastMessage.content) {
+        preview = typeof lastMessage.content === 'string'
+          ? lastMessage.content.substring(0, 50) + (lastMessage.content.length > 50 ? '...' : '')
+          : '';
+      }
+    }
+    
+    console.log('对话标题:', title);
+    console.log('对话预览:', preview);
+    
+    // 准备请求数据
+    console.log('准备请求数据...');
+    const sessionId = conversationId || currentConversationId || generateUUID();
+    console.log('使用的会话ID:', sessionId);
+    
+    const conversationData = {
+      id: sessionId,
+      title,
+      preview,
+      lastUpdated: new Date().toISOString(),
+      messages: visibleMessages,
+      userId: localStorage.getItem('userId')
+    };
+    
+    console.log('保存对话数据:', conversationData);
+    
+    // 确定请求方法和URL
+    const method = conversationId || currentConversationId ? 'PUT' : 'POST';
+    console.log('使用请求方法:', method);
+    
+    // 使用与其他服务文件一致的 API 基础 URL
+    const API_BASE_URL = process.env.NODE_ENV === 'production' 
+      ? '' // 生产环境使用相对路径
+      : 'http://localhost:5000';
+    const url = conversationId || currentConversationId 
+      ? `${API_BASE_URL}/api/chats/${conversationId || currentConversationId}` 
+      : `${API_BASE_URL}/api/chats`;
+    
+    console.log(`发送${method}请求到${url}`);
+    
+    // 发送请求保存对话
+    console.log('准备发送API请求...');
+    const token = localStorage.getItem('token');
+    console.log('使用token:', token ? '有效token' : '无效token');
+    
+    const response = await fetch(url, {
+      method: method,
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`
+      },
+      body: JSON.stringify(conversationData)
+    });
+    
+    console.log('保存对话响应状态:', response.status);
+    
+    if (!response.ok) {
+      throw new Error(`保存对话失败: ${response.status}`);
+    }
+    
+    console.log('解析响应数据...');
+    const data = await response.json();
+    console.log('对话保存成功, 响应数据:', data);
+    
+    // 更新当前对话 ID
+    const newConversationId = data.id || data.conversation_id || (data.conversation && data.conversation.id);
+    console.log('响应中的会话ID:', newConversationId);
+    
+    if (newConversationId && (!conversationId && !currentConversationId)) {
+      console.log('设置当前对话ID:', newConversationId);
+      setCurrentConversationId(newConversationId);
+    }
+    
+    // 立即更新侧边栏
+    console.log('准备更新侧边栏对话列表...');
+    try {
+      // 强制等待获取对话列表完成
+      await fetchUserConversations();
+      console.log('侧边栏已更新');
+      
+      // 手动将当前对话添加到对话列表中，确保即使后端返回有问题也能显示
+      const currentConversation = {
+        id: newConversationId,
+        title: title,
+        preview: preview,
+        lastUpdated: new Date().toISOString()
+      };
+      console.log('手动添加当前对话到列表:', currentConversation);
+      
+      // 更新对话列表状态
+      setConversations(prevConversations => {
+        // 检查当前对话是否已存在
+        const existingIndex = prevConversations.findIndex(conv => conv.id === newConversationId);
+        if (existingIndex >= 0) {
+          // 替换现有对话
+          const updatedConversations = [...prevConversations];
+          updatedConversations[existingIndex] = currentConversation;
+          console.log('更新现有对话:', updatedConversations);
+          return updatedConversations;
+        } else {
+          // 添加新对话
+          console.log('添加新对话:', currentConversation);
+          return [...prevConversations, currentConversation];
+        }
+      });
+    } catch (err) {
+      console.error('Chat error:', err);
+      setError(err.message || String(err));
+      
+      // 添加错误消息
       const errorMessage = createMessage(
         SenderRole.SYSTEM,
         `错误: ${err.message || '未知错误'}`,
@@ -442,33 +666,22 @@ function AiChat() {
       
       setMessages(prev => [...prev, errorMessage]);
       
-      // 如果发送失败，将最近使用的图片附件添加回附件列表
-      if (imageAttachment) {
-        setAttachments([imageAttachment]);
+      // 如果发送失败且有附件，保留附件列表
+      if (attachments && attachments.length > 0) {
+        // 保留现有附件
+        setAttachments([...attachments]);
       }
     } finally {
       setIsLoading(false);
     }
-  };
+  } catch (error) {
+    console.error('保存对话失败:', error);
+    setError(error.message || String(error));
+    return null;
+  }
+};
   
-  // 处理工具调用
-  const handleToolAction = (toolId, action) => {
-    // 如果是导航到其他页面
-    if (action === 'navigate') {
-      const toolRoutes = {
-        'frequency_generator': '/frequency-generator',
-        'ai_id_generator': '/ai-id-generator',
-        'relationship_manager': '/ai-relationships'
-      };
-      
-      if (toolRoutes[toolId]) {
-        navigate(toolRoutes[toolId]);
-      }
-    }
-    
-    // 清除活动工具
-    setActiveTools([]);
-  };
+  // 处理工具调用函数已在前面定义
 
   // 自动滚动到最新消息
   useEffect(() => {
@@ -477,113 +690,11 @@ function AiChat() {
     }
   }, [messages]);
   
-  // 保存对话到数据库
-  const saveConversation = async (messageList, conversationId = null) => {
-    // 只有登录用户才保存对话
-    if (!isLoggedIn) {
-      console.log('未登录，不保存对话');
-      return null;
-    }
-    
-    // 确保至少有一条消息
-    if (!messageList || messageList.length === 0) {
-      console.log('没有消息，不保存对话');
-      return null;
-    }
-    
-    console.log('开始保存对话，当前对话ID:', conversationId || currentConversationId || '新对话');
-    
-    try {
-      // 准备数据
-      const visibleMessages = messageList.filter(msg => msg.visible !== false);
-      console.log('可见消息数量:', visibleMessages.length);
-      
-      const lastMessage = visibleMessages[visibleMessages.length - 1];
-      let title = '新对话';
-      let preview = '';
-      
-      // 设置标题和预览
-      if (visibleMessages.length > 0) {
-        const firstUserMessage = visibleMessages.find(msg => msg.role === SenderRole.USER);
-        if (firstUserMessage && firstUserMessage.content) {
-          title = typeof firstUserMessage.content === 'string' 
-            ? firstUserMessage.content.substring(0, 30) + (firstUserMessage.content.length > 30 ? '...' : '')
-            : '新对话';
-        }
-        
-        if (lastMessage && lastMessage.content) {
-          preview = typeof lastMessage.content === 'string'
-            ? lastMessage.content.substring(0, 50) + (lastMessage.content.length > 50 ? '...' : '')
-            : '';
-        }
-      }
-      
-      console.log('对话标题:', title);
-      console.log('对话预览:', preview);
-      
-      // 准备请求数据
-      const conversationData = {
-        id: conversationId || currentConversationId || generateUUID(),
-        title,
-        preview,
-        lastUpdated: new Date().toISOString(),
-        messages: visibleMessages,
-        userId: localStorage.getItem('userId')
-      };
-      
-      console.log('保存对话数据:', conversationData);
-      
-      // 确定请求方法和URL
-      const method = conversationId || currentConversationId ? 'PUT' : 'POST';
-      // 使用与其他服务文件一致的 API 基础 URL
-      const API_BASE_URL = process.env.NODE_ENV === 'production' 
-        ? '' // 生产环境使用相对路径
-        : 'http://localhost:5000';
-      const url = conversationId || currentConversationId 
-        ? `${API_BASE_URL}/api/conversations/${conversationId || currentConversationId}` 
-        : `${API_BASE_URL}/api/conversations`;
-      
-      console.log(`发送${method}请求到${url}`);
-      
-      // 发送请求保存对话
-      const response = await fetch(url, {
-        method: method,
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${localStorage.getItem('token')}`
-        },
-        body: JSON.stringify(conversationData)
-      });
-      
-      console.log('保存对话响应状态:', response.status);
-      
-      if (!response.ok) {
-        throw new Error(`保存对话失败: ${response.status}`);
-      }
-      
-      const data = await response.json();
-      console.log('对话保存成功:', data);
-      
-      // 更新当前对话 ID
-      const newConversationId = data.id || data.conversation_id || (data.conversation && data.conversation.id);
-      if (newConversationId && (!conversationId && !currentConversationId)) {
-        console.log('设置当前对话ID:', newConversationId);
-        setCurrentConversationId(newConversationId);
-      }
-      
-      // 立即更新侧边栏
-      console.log('更新侧边栏对话列表');
-      await fetchUserConversations();
-      
-      return newConversationId;
-    } catch (error) {
-      console.error('保存对话失败:', error);
-      return null;
-    }
-  };
+  // 保存对话到数据库函数已在前面定义
 
   // 从后端获取用户对话列表
   const fetchUserConversations = async () => {
+    console.log('===== fetchUserConversations 开始执行 =====');
     // 只有登录用户才获取对话
     if (!isLoggedIn) {
       console.log('未登录，不获取对话列表');
@@ -599,6 +710,7 @@ function AiChat() {
     console.log('开始获取用户对话列表，用户ID:', userId);
     
     try {
+      console.log('设置加载状态...');
       setIsLoadingConversations(true);
       
       // 后端使用JWT认证，不需要显式传递userId参数
@@ -606,10 +718,11 @@ function AiChat() {
       console.log('使用token获取对话列表:', token ? '有效token' : '无效token');
       
       // 使用完整的后端API URL
-      const API_BASE_URL = 'http://localhost:5000';
-      console.log('请求对话列表URL:', `${API_BASE_URL}/api/conversations`);
+      const API_BASE_URL = process.env.NODE_ENV === 'production' ? '' : 'http://localhost:5000';
+      console.log('请求对话列表URL:', `${API_BASE_URL}/api/chats`);
       
-      const response = await fetch(`${API_BASE_URL}/api/conversations`, {
+      console.log('发送API请求...');
+      const response = await fetch(`${API_BASE_URL}/api/chats`, {
         method: 'GET',
         headers: {
           'Authorization': `Bearer ${token}`
@@ -622,24 +735,31 @@ function AiChat() {
         throw new Error(`获取对话列表失败: ${response.status}`);
       }
       
+      console.log('解析API响应...');
       const data = await response.json();
       console.log('获取到的对话数据:', data);
       
-      if (data && Array.isArray(data.conversations)) {
+      if (data && Array.isArray(data.chats)) {
+        console.log('对话数组长度:', data.chats.length);
         // 确保对话数据格式正确
-        const processedConversations = data.conversations.map(conv => ({
-          id: conv.id || conv._id,
-          title: conv.title || '新对话',
-          preview: conv.preview || '无预览内容',
-          lastUpdated: conv.lastUpdated || conv.last_updated || new Date().toISOString(),
-          messages: conv.messages || []
-        }));
+        const processedConversations = data.chats.map(conv => {
+          console.log('处理对话:', conv);
+          return {
+            id: conv.id || conv._id,
+            title: conv.title || '新对话',
+            preview: conv.preview || '无预览内容',
+            lastUpdated: conv.lastUpdated || conv.last_updated || new Date().toISOString(),
+            messages: conv.messages || []
+          };
+        });
         
         console.log('处理后的对话列表:', processedConversations);
+        console.log('更新conversations状态...');
         setConversations(processedConversations);
         
         // 如果有对话且没有选中当前对话，自动选择最近的对话
         if (processedConversations.length > 0 && !currentConversationId) {
+          console.log('没有选中的对话，准备自动选择最近的对话...');
           // 按时间排序，选择最近的对话
           const sortedConversations = [...processedConversations].sort((a, b) => {
             const dateA = new Date(a.lastUpdated || 0);
@@ -650,6 +770,8 @@ function AiChat() {
           const latestConversation = sortedConversations[0];
           console.log('自动选择最近的对话:', latestConversation);
           await handleSelectConversation(latestConversation.id);
+        } else {
+          console.log('当前已有选中的对话ID:', currentConversationId);
         }
       } else {
         console.warn('后端返回的数据格式不正确:', data);
@@ -667,7 +789,9 @@ function AiChat() {
         }
       ]);
     } finally {
+      console.log('设置加载状态为false...');
       setIsLoadingConversations(false);
+      console.log('===== fetchUserConversations 执行完成 =====');
     }
   };
   

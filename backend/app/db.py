@@ -200,16 +200,36 @@ def init_db(app):
 def create(table, data):
     """在指定表中创建数据"""
     async def _create():
+        import logging
+        
+        # 记录创建前的数据
+        logging.info(f"DB Create - Table: {table}")
+        logging.info(f"DB Create - Data before: {data}")
+        if 'password_hash' in data:
+            logging.info(f"DB Create - Password hash before: {data['password_hash']}")
+            logging.info(f"DB Create - Password hash type: {type(data['password_hash'])}")
+            logging.info(f"DB Create - Password hash length: {len(data['password_hash'])}")
+        
         db = await get_db()
         if db is None:
             print("Using mock mode for create operation")
             return data
         
         try:
+            # 执行创建操作
             result = await db.create(table, data)
+            
+            # 记录创建后的结果
+            logging.info(f"DB Create - Result type: {type(result)}")
+            logging.info(f"DB Create - Result: {result}")
+            if result and isinstance(result, dict) and 'password_hash' in result:
+                logging.info(f"DB Create - Password hash after: {result['password_hash']}")
+                logging.info(f"DB Create - Password hash type after: {type(result['password_hash'])}")
+                logging.info(f"DB Create - Password hash length after: {len(result['password_hash'])}")
+            
             return result
         except Exception as e:
-            print(f"Error creating data in {table}: {e}")
+            logging.error(f"Error creating data in {table}: {e}")
             return data
     
     return run_async(_create())
@@ -339,6 +359,38 @@ class DBSession:
         """回滚会话中的所有更改"""
         print("回滚会话中的所有更改")
         # 实际上这里不需要做什么，因为每个操作都是立即执行的
+
+# 同步删除数据
+def delete(table, condition):
+    """删除指定表中的数据
+    
+    Args:
+        table (str): 表名
+        condition (dict): 删除条件
+        
+    Returns:
+        bool: 是否删除成功
+    """
+    async def _delete():
+        db = await get_db()
+        if db is None:
+            print("Using mock mode for delete operation")
+            return False
+        
+        try:
+            # 构建条件查询
+            conditions = " AND ".join([f"{k} = '{v}'" for k, v in condition.items()])
+            query_str = f"DELETE FROM {table} WHERE {conditions}"
+            print(f"Executing delete query: {query_str}")
+            result = await db.query(query_str)
+            
+            print(f"Delete result: {result}")
+            return True
+        except Exception as e:
+            print(f"Error deleting data from {table}: {e}")
+            return False
+    
+    return run_async(_delete())
 
 # 创建全局会话对象
 db_session = DBSession()

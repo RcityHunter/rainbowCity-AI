@@ -123,7 +123,7 @@ async def chat_agent(chat_data: ChatRequest):
 @router.post("/with_file", response_model=ChatResponse)
 async def chat_with_file(
     request: Request,
-    user_input: str = Form(...),
+    user_input: Optional[str] = Form(None),  # 改为可选
     session_id: Optional[str] = Form(None),
     user_id: Optional[str] = Form("anonymous"),
     ai_id: Optional[str] = Form("ai_rainbow_city"),
@@ -137,11 +137,23 @@ async def chat_with_file(
     try:
         logging.debug("Received chat_with_file request")
         
+        # 记录请求头信息，帮助诊断问题
+        content_type = request.headers.get('content-type', 'unknown')
+        content_length = request.headers.get('content-length', 'unknown')
+        logging.debug(f"Request Content-Type: {content_type}")
+        logging.debug(f"Request Content-Length: {content_length}")
+        
         # 如果没有提供session_id，则生成一个新的
         if not session_id:
             session_id = str(uuid.uuid4())
         
-        logging.debug(f"User message: {user_input[:100]}{'...' if len(user_input) > 100 else ''}")
+        # 处理 user_input 可能为 None 的情况
+        if user_input is None:
+            user_input = ""
+            logging.debug("No user_input provided, using empty string")
+        else:
+            logging.debug(f"User message: {user_input[:100]}{'...' if len(user_input) > 100 else ''}")
+            
         logging.debug(f"Session ID: {session_id}")
         
         # 处理文件
@@ -219,6 +231,18 @@ async def chat_with_file(
         )
         logging.debug(f"AI Assistant process_query completed with result keys: {result.keys() if result else 'None'}")
         
+        # 确保结果中包含 success 字段
+        if isinstance(result, dict):
+            if 'success' not in result:
+                result['success'] = True
+        else:
+            # 如果结果不是字典，创建一个新的字典
+            result = {
+                'success': True,
+                'session_id': session_id,
+                'response': str(result)
+            }
+            
         return result
     except Exception as e:
         logging.error(f"带文件的AI-Agent聊天接口错误: {str(e)}")
@@ -231,14 +255,14 @@ async def chat_with_file(
 @router.post("/with_image", response_model=ChatResponse)
 async def chat_with_image(
     request: Request,
-    user_input: str = Form(...),
+    user_input: Optional[str] = Form(None),  # 改为可选，与 chat_with_file 保持一致
     session_id: Optional[str] = Form(None),
     user_id: Optional[str] = Form("anonymous"),
     ai_id: Optional[str] = Form("ai_rainbow_city"),
     image: Optional[UploadFile] = File(None)
 ):
     """带图片的AI-Agent聊天接口（兼容旧版本）"""
-    return await chat_with_file(
+    result = await chat_with_file(
         request=request,
         user_input=user_input,
         session_id=session_id,
@@ -250,6 +274,12 @@ async def chat_with_image(
         video=None,
         document=None
     )
+    
+    # 确保结果中包含 success 字段
+    if isinstance(result, dict) and 'success' not in result:
+        result['success'] = True
+    
+    return result
 
 @router.get("/history/{session_id}", response_model=HistoryResponse)
 async def get_history(session_id: str):

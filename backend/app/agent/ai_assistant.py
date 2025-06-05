@@ -7,6 +7,7 @@ from typing import Dict, Any, List, Optional
 import json
 import uuid
 import time
+from datetime import datetime
 
 from .context_builder import ContextBuilder
 from .llm_caller import OpenAILLMCaller
@@ -21,6 +22,10 @@ class AIAssistant:
         self.llm_caller = OpenAILLMCaller(model_name)
         self.tool_invoker = ToolInvoker()
         self.event_logger = EventLogger()
+        
+        # 导入聊天服务
+        from app.services.chat_service import ChatService
+        self.chat_service = ChatService()
         
         # 注册默认工具
         self._register_default_tools()
@@ -113,6 +118,34 @@ class AIAssistant:
             file_type=file_type, file_info=file_info
         )
         
+        # 保存用户输入到数据库
+        import asyncio
+        import logging
+        logging.info(f"Saving user message for session {session_id}")
+        # 创建一个异步任务来保存消息
+        asyncio.create_task(
+            self.chat_service.save_message(
+                session_id=session_id,
+                user_id=user_id,
+                role=user_id,  # 用户角色就是用户ID
+                content=user_input,
+                content_type="text",
+                metadata={"file_type": file_type} if file_type else None
+            )
+        )
+        
+        # 更新或创建会话元数据
+        logging.info(f"Updating session metadata for session {session_id}")
+        asyncio.create_task(
+            self.chat_service.update_session(
+                session_id=session_id,
+                user_id=user_id,
+                title=user_input[:30] + ("..." if len(user_input) > 30 else ""),  # 使用用户输入的前30个字符作为标题
+                last_message=user_input,
+                last_message_time=datetime.now().isoformat()
+            )
+        )
+        
         # 2. 构建初始上下文
         import logging
         logging.debug(f"Building initial context with user input and file data")
@@ -170,6 +203,32 @@ class AIAssistant:
                 final_response["content"], True
             )
             
+            # 保存AI回复到数据库
+            import asyncio
+            import logging
+            logging.info(f"Saving AI response for session {session_id}")
+            # 创建一个异步任务来保存消息
+            asyncio.create_task(
+                self.chat_service.save_message(
+                    session_id=session_id,
+                    user_id=user_id,
+                    role=f"{user_id}_aiR",  # AI回复的角色格式
+                    content=final_response["content"],
+                    content_type="text"
+                )
+            )
+            
+            # 更新会话元数据，使用AI回复作为最后一条消息
+            logging.info(f"Updating session metadata with AI response for session {session_id}")
+            asyncio.create_task(
+                self.chat_service.update_session(
+                    session_id=session_id,
+                    user_id=user_id,
+                    last_message=final_response["content"][:50] + ("..." if len(final_response["content"]) > 50 else ""),
+                    last_message_time=datetime.now().isoformat()
+                )
+            )
+            
             # 10. 保存日志
             log_file = self.event_logger.save_logs(session_id)
             
@@ -190,6 +249,32 @@ class AIAssistant:
             self.event_logger.log_final_response(
                 session_id, user_id, ai_id,
                 first_response["content"], False
+            )
+            
+            # 保存AI回复到数据库
+            import asyncio
+            import logging
+            logging.info(f"Saving AI response for session {session_id}")
+            # 创建一个异步任务来保存消息
+            asyncio.create_task(
+                self.chat_service.save_message(
+                    session_id=session_id,
+                    user_id=user_id,
+                    role=f"{user_id}_aiR",  # AI回复的角色格式
+                    content=first_response["content"],
+                    content_type="text"
+                )
+            )
+            
+            # 更新会话元数据，使用AI回复作为最后一条消息
+            logging.info(f"Updating session metadata with AI response for session {session_id}")
+            asyncio.create_task(
+                self.chat_service.update_session(
+                    session_id=session_id,
+                    user_id=user_id,
+                    last_message=first_response["content"][:50] + ("..." if len(first_response["content"]) > 50 else ""),
+                    last_message_time=datetime.now().isoformat()
+                )
             )
             
             # 保存日志
