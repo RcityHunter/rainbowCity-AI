@@ -213,14 +213,92 @@ function AiChat() {
   };
   
   // 选择对话
-  const handleSelectConversation = (conversationId) => {
-    const selectedConversation = conversations.find(conv => conv.id === conversationId);
-    if (selectedConversation) {
-      setSessionId(conversationId);
-      // 如果有保存的消息，则加载它们
-      if (selectedConversation.messages && selectedConversation.messages.length > 0) {
-        setMessages(selectedConversation.messages);
+  const handleSelectConversation = async (conversationId) => {
+    console.log('选择对话:', conversationId);
+    if (!conversationId) return;
+    
+    try {
+      setIsLoading(true);
+      setCurrentConversationId(conversationId);
+      setSessionId(conversationId); // 设置会话ID
+      
+      // 获取选中对话的消息
+      const API_BASE_URL = process.env.NODE_ENV === 'production' ? '' : 'http://localhost:5000';
+      const token = localStorage.getItem('token');
+      
+      console.log('获取对话消息:', `${API_BASE_URL}/api/chats/${conversationId}/messages`);
+      const response = await fetch(`${API_BASE_URL}/api/chats/${conversationId}/messages`, {
+        method: 'GET',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Cache-Control': 'no-cache',
+          'Pragma': 'no-cache'
+        }
+      });
+      
+      if (!response.ok) {
+        throw new Error(`获取对话消息失败: ${response.status}`);
       }
+      
+      const data = await response.json();
+      console.log('获取到的对话消息:', data);
+      
+      if (data && Array.isArray(data.messages)) {
+        // 处理消息数据
+        const processedMessages = data.messages.map(msg => ({
+          id: msg.id || `msg-${Date.now()}-${Math.random()}`,
+          role: msg.role || SenderRole.USER,
+          content: msg.content || '',
+          type: msg.content_type || MessageType.TEXT,
+          timestamp: msg.created_at || new Date().toISOString(),
+          visible: true,
+          metadata: msg.metadata || {}
+        }));
+        
+        // 如果没有消息，添加一个默认的系统消息
+        if (processedMessages.length === 0) {
+          processedMessages.push({
+            id: `system-${Date.now()}`,
+            role: SenderRole.SYSTEM,
+            content: '没有找到历史消息',
+            type: MessageType.TEXT,
+            timestamp: new Date().toISOString(),
+            visible: true
+          });
+        }
+        
+        setMessages(processedMessages);
+      } else {
+        console.warn('对话消息数据格式不正确:', data);
+        // 设置一个默认消息
+        setMessages([
+          {
+            id: `system-${Date.now()}`,
+            role: SenderRole.ASSISTANT,
+            content: '你好！我是彩虹城AI，有什么我可以帮你的吗？',
+            type: MessageType.TEXT,
+            timestamp: new Date().toISOString(),
+            visible: true
+          }
+        ]);
+      }
+    } catch (error) {
+      console.error('选择对话失败:', error);
+      setError(error.message || String(error));
+      // 设置一个错误消息
+      setMessages([
+        {
+          id: `error-${Date.now()}`,
+          role: SenderRole.SYSTEM,
+          content: `加载对话失败: ${error.message || '未知错误'}`,
+          type: MessageType.TEXT,
+          timestamp: new Date().toISOString(),
+          visible: true,
+          metadata: { error: true }
+        }
+      ]);
+    } finally {
+      setIsLoading(false);
     }
   };
   
@@ -387,6 +465,9 @@ function AiChat() {
           visible: true // 确保消息可见
         };
         
+        // 重置加载状态
+        setIsLoading(false);
+        
         // 如果有工具调用
         if (data.tool_calls && data.tool_calls.length > 0) {
           // 处理工具调用
@@ -456,22 +537,24 @@ function AiChat() {
       }
     } catch (err) {
       console.error('Chat error:', err);
+      // 重置加载状态
+      setIsLoading(false);
       setError(err.message || String(err));
       
       // 添加错误消息
-  const errorMessage = createMessage(
-    SenderRole.SYSTEM,
-    `错误: ${err.message || '未知错误'}`,
-    MessageType.TEXT,
-    { error: true }
-  );
-  
-  setMessages(prev => [...prev, errorMessage]);
-  
-  // 如果发送失败，将最近使用的图片附件添加回附件列表
-  if (imageAttachment) {
-    setAttachments([imageAttachment]);
-  }
+      const errorMessage = createMessage(
+        SenderRole.SYSTEM,
+        `错误: ${err.message || '未知错误'}`,
+        MessageType.TEXT,
+        { error: true }
+      );
+      
+      setMessages(prev => [...prev, errorMessage]);
+      
+      // 如果发送失败，将最近使用的图片附件添加回附件列表
+      if (imageAttachment) {
+        setAttachments([imageAttachment]);
+      }
 } finally {
   setIsLoading(false);
 }
@@ -623,35 +706,47 @@ const saveConversation = async (messageList, conversationId = null) => {
     // 立即更新侧边栏
     console.log('准备更新侧边栏对话列表...');
     try {
-      // 强制等待获取对话列表完成
-      await fetchUserConversations();
-      console.log('侧边栏已更新');
-      
       // 手动将当前对话添加到对话列表中，确保即使后端返回有问题也能显示
       const currentConversation = {
         id: newConversationId,
         title: title,
         preview: preview,
-        lastUpdated: new Date().toISOString()
+        lastUpdated: new Date().toISOString(),
+        messages: visibleMessages // 保存消息到对话中
       };
-      console.log('手动添加当前对话到列表:', currentConversation);
+      console.log('准备添加当前对话到列表:', currentConversation);
       
       // 更新对话列表状态
       setConversations(prevConversations => {
         // 检查当前对话是否已存在
         const existingIndex = prevConversations.findIndex(conv => conv.id === newConversationId);
+        let updatedConversations = [];
+        
         if (existingIndex >= 0) {
           // 替换现有对话
-          const updatedConversations = [...prevConversations];
+          updatedConversations = [...prevConversations];
           updatedConversations[existingIndex] = currentConversation;
-          console.log('更新现有对话:', updatedConversations);
-          return updatedConversations;
+          console.log('更新现有对话:', updatedConversations[existingIndex].id);
         } else {
-          // 添加新对话
-          console.log('添加新对话:', currentConversation);
-          return [...prevConversations, currentConversation];
+          // 添加新对话到最前面
+          updatedConversations = [currentConversation, ...prevConversations];
+          console.log('添加新对话到列表头部:', currentConversation.id);
         }
+        
+        console.log('更新后的对话列表长度:', updatedConversations.length);
+        return updatedConversations;
       });
+      
+      // 强制等待一小段时间再获取对话列表，确保后端数据已写入
+      setTimeout(async () => {
+        try {
+          console.log('延时获取对话列表以确保同步...');
+          await fetchUserConversations();
+          console.log('侧边栏已更新');
+        } catch (fetchError) {
+          console.error('延时获取对话列表失败:', fetchError);
+        }
+      }, 1000); // 等待1秒再获取列表
     } catch (err) {
       console.error('Chat error:', err);
       setError(err.message || String(err));
@@ -725,7 +820,9 @@ const saveConversation = async (messageList, conversationId = null) => {
       const response = await fetch(`${API_BASE_URL}/api/chats`, {
         method: 'GET',
         headers: {
-          'Authorization': `Bearer ${token}`
+          'Authorization': `Bearer ${token}`,
+          'Cache-Control': 'no-cache',  // 添加缓存控制，确保获取最新数据
+          'Pragma': 'no-cache'
         }
       });
       
@@ -745,10 +842,10 @@ const saveConversation = async (messageList, conversationId = null) => {
         const processedConversations = data.chats.map(conv => {
           console.log('处理对话:', conv);
           return {
-            id: conv.id || conv._id,
+            id: conv.id || conv._id || conv.session_id, // 添加session_id作为备选ID
             title: conv.title || '新对话',
-            preview: conv.preview || '无预览内容',
-            lastUpdated: conv.lastUpdated || conv.last_updated || new Date().toISOString(),
+            preview: conv.last_message || conv.preview || '无预览内容', // 优先使用last_message
+            lastUpdated: conv.last_message_time || conv.lastUpdated || conv.last_updated || new Date().toISOString(),
             messages: conv.messages || []
           };
         });
@@ -769,7 +866,9 @@ const saveConversation = async (messageList, conversationId = null) => {
           
           const latestConversation = sortedConversations[0];
           console.log('自动选择最近的对话:', latestConversation);
-          await handleSelectConversation(latestConversation.id);
+          if (latestConversation && latestConversation.id) {
+            await handleSelectConversation(latestConversation.id);
+          }
         } else {
           console.log('当前已有选中的对话ID:', currentConversationId);
         }
@@ -794,6 +893,8 @@ const saveConversation = async (messageList, conversationId = null) => {
       console.log('===== fetchUserConversations 执行完成 =====');
     }
   };
+  
+  // 记录消息变化
   
   // 记录消息变化
   // 检查登录状态
