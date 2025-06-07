@@ -598,6 +598,12 @@ const saveConversation = async (messageList, conversationId = null) => {
     return null;
   }
   
+  // 检查是否是首次对话
+  const isFirstConversation = !conversationId && !currentConversationId;
+  if (isFirstConversation) {
+    console.log('检测到首次对话，将创建新的对话记录');
+  }
+  
   // 确保至少有一条消息
   if (!messageList || messageList.length === 0) {
     console.log('没有消息，不保存对话');
@@ -731,22 +737,40 @@ const saveConversation = async (messageList, conversationId = null) => {
           // 添加新对话到最前面
           updatedConversations = [currentConversation, ...prevConversations];
           console.log('添加新对话到列表头部:', currentConversation.id);
+          
+          // 如果是首次对话，设置当前对话 ID
+          if (isFirstConversation) {
+            console.log('首次对话，设置当前对话 ID:', newConversationId);
+            setCurrentConversationId(newConversationId);
+            setSessionId(newConversationId);
+          }
         }
         
         console.log('更新后的对话列表长度:', updatedConversations.length);
         return updatedConversations;
       });
       
-      // 强制等待一小段时间再获取对话列表，确保后端数据已写入
-      setTimeout(async () => {
+      // 如果是首次对话，立即获取对话列表
+      if (isFirstConversation) {
         try {
-          console.log('延时获取对话列表以确保同步...');
+          console.log('首次对话，立即获取对话列表...');
           await fetchUserConversations();
-          console.log('侧边栏已更新');
+          console.log('首次对话侧边栏已更新');
         } catch (fetchError) {
-          console.error('延时获取对话列表失败:', fetchError);
+          console.error('获取对话列表失败:', fetchError);
         }
-      }, 1000); // 等待1秒再获取列表
+      } else {
+        // 非首次对话，延时获取列表
+        setTimeout(async () => {
+          try {
+            console.log('延时获取对话列表以确保同步...');
+            await fetchUserConversations();
+            console.log('侧边栏已更新');
+          } catch (fetchError) {
+            console.error('延时获取对话列表失败:', fetchError);
+          }
+        }, 1000); // 等待1秒再获取列表
+      }
     } catch (err) {
       console.error('Chat error:', err);
       setError(err.message || String(err));
