@@ -333,6 +333,32 @@ def update(table, id, data):
     return run_async(_update())
 
 
+# 执行原始SQL查询
+async def execute_raw_query(query_str):
+    """执行原始SQL查询
+    
+    Args:
+        query_str (str): SQL查询字符串
+        
+    Returns:
+        Any: 查询结果
+    """
+    db = await get_db()
+    if db is None:
+        print("Using mock mode for raw query operation")
+        return None
+    
+    try:
+        print(f"Executing raw query: {query_str}")
+        result = await db.query(query_str)
+        
+        if result and isinstance(result, list) and len(result) > 0 and 'result' in result[0]:
+            return result[0]['result']
+        return result
+    except Exception as e:
+        print(f"Error executing raw query: {e}")
+        raise
+
 # 创建一个数据库会话对象，用于兼容SQLAlchemy风格的代码
 class DBSession:
     def __init__(self):

@@ -515,7 +515,14 @@ function AiChat() {
     
     try {
       // 准备请求数据
-      const visibleMessages = messages
+      // 使用函数形式获取最新的messages状态
+      let allMessages = [];
+      setMessages(prevMessages => {
+        allMessages = [...prevMessages];
+        return prevMessages; // 不改变状态
+      });
+      
+      const visibleMessages = allMessages
         .filter(msg => msg.visible || msg.role === SenderRole.SYSTEM)
         .concat(userMessages)
         .map(msg => ({
@@ -572,20 +579,34 @@ function AiChat() {
       } 
       // 否则使用标准JSON请求
       else {
-        response = await fetch(chatEndpoint, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${localStorage.getItem('token')}` // 添加认证令牌
-          },
-          body: JSON.stringify({
-            session_id: sessionId,
-            turn_id: newTurnId,
-            messages: visibleMessages,
-            user_id: localStorage.getItem('userId') || 'anonymous',
-            ai_id: 'ai_rainbow_city'
-          }),
-        });
+        // 创建AbortController用于超时处理
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 30000); // 30秒超时
+        
+        try {
+          response = await fetch(chatEndpoint, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${localStorage.getItem('token')}` // 添加认证令牌
+            },
+            body: JSON.stringify({
+              session_id: sessionId,
+              turn_id: newTurnId,
+              messages: visibleMessages,
+              user_id: localStorage.getItem('userId') || 'anonymous',
+              ai_id: 'ai_rainbow_city'
+            }),
+            signal: controller.signal
+          });
+          
+          clearTimeout(timeoutId); // 请求成功后清除超时
+        } catch (error) {
+          if (error.name === 'AbortError') {
+            throw new Error('请求超时，服务器响应时间过长。可能是数据库查询阻塞或服务器负载过高。');
+          }
+          throw error;
+        }
       }
       
       if (!response.ok) {

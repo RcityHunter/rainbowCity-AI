@@ -58,22 +58,33 @@ class ChatService:
             # 检查结果是否为协程并等待它
             import asyncio
             if asyncio.iscoroutine(result):
-                saved_message = await result
+                try:
+                    # 添加超时处理
+                    saved_message = await asyncio.wait_for(result, timeout=3.0)
+                except asyncio.TimeoutError:
+                    logging.error(f"保存消息超时，返回原始数据: session_id={session_id}")
+                    # 超时时返回原始数据，不中断流程
+                    return message_data
             else:
                 saved_message = result
                 
-            # 更新会话信息
-            await ChatService.update_session(
-                session_id, 
-                user_id, 
-                last_message=content[:50] + "..." if len(content) > 50 else content,
-                last_message_time=created_at
-            )
+            # 临时禁用会话更新，避免数据库阻塞
+            # 注释掉会话更新代码，以确保消息流程不会被阻塞
+            # await ChatService.update_session(
+            #     session_id, 
+            #     user_id, 
+            #     last_message=content[:50] + "..." if len(content) > 50 else content,
+            #     last_message_time=created_at
+            # )
             
-            return saved_message
+            # 记录日志，表明我们跳过了会话更新
+            logging.info(f"临时跳过会话更新以避免阻塞: session_id={session_id}")
+            
+            return saved_message or message_data
         except Exception as e:
             logging.error(f"保存聊天消息失败: {str(e)}")
-            raise
+            # 返回原始数据而不是抛出异常，确保流程继续
+            return message_data
     
     @staticmethod
     async def update_session(
@@ -98,97 +109,69 @@ class ChatService:
         """
         logging.info(f"ChatService.update_session - 开始更新会话: session_id={session_id}, user_id={user_id}")
         try:
-            # 查询会话是否存在
-            logging.info(f"ChatService.update_session - 查询会话: session_id={session_id}")
             import asyncio
+            from concurrent.futures import TimeoutError as FuturesTimeoutError
             
-            # 先使用id字段查询
-            sessions_result = query('chat_sessions', {'id': session_id})
+            # 设置更短的超时时间
+            TIMEOUT_SECONDS = 3.0
             
-            # 检查结果是否为协程并等待它
-            if asyncio.iscoroutine(sessions_result):
-                sessions = await sessions_result
-                logging.info(f"ChatService.update_session - 异步查询结果(id): {sessions}")
-            else:
-                sessions = sessions_result
-                logging.info(f"ChatService.update_session - 同步查询结果(id): {sessions}")
-            
-            # 如果没有找到，尝试使用session_id字段查询
-            if not sessions or len(sessions) == 0:
-                logging.info(f"ChatService.update_session - 使用id字段未找到会话，尝试使用session_id字段")
-                sessions_result = query('chat_sessions', {'session_id': session_id})
-                
-                # 检查结果是否为协程并等待它
-                if asyncio.iscoroutine(sessions_result):
-                    sessions = await sessions_result
-                    logging.info(f"ChatService.update_session - 异步查询结果(session_id): {sessions}")
-                else:
-                    sessions = sessions_result
-                    logging.info(f"ChatService.update_session - 同步查询结果(session_id): {sessions}")
-                
+            # 直接创建新会话，不进行查询
+            # 这样可以避免查询操作可能导致的阻塞
             now = datetime.now().isoformat()
             
-            if not sessions or len(sessions) == 0:
-                # 创建新会话
-                logging.info(f"ChatService.update_session - 创建新会话: session_id={session_id}")
-                # 确保同时设置id和session_id字段，且值相同
-                session_data = {
-                    "id": session_id,  # 直接使用传入的session_id作为会话ID
-                    "session_id": session_id,  # 也设置session_id字段为相同的值
-                    "user_id": user_id,
-                    "title": title or f"新对话 {now}",
-                    "last_message": last_message or "",
-                    "last_message_time": last_message_time or now,
-                    "message_count": 1,
-                    "created_at": now,
-                    "updated_at": now
-                }
-                logging.info(f"ChatService.update_session - 新会话数据详情: id={session_data['id']}, session_id={session_data['session_id']}, title={session_data['title']}")
-                logging.info(f"ChatService.update_session - 将使用create函数创建新会话到chat_sessions表")
-                logging.info(f"ChatService.update_session - 新会话数据: {session_data}")
+            # 直接创建或更新会话，不进行查询
+            # 这样可以避免查询操作可能导致的阻塞
+            session_data = {
+                "id": session_id,
+                "session_id": session_id,  
+                "user_id": user_id,
+                "title": title or "新对话",
+                "last_message": last_message or "",
+                "last_message_time": last_message_time or now,
+                "updated_at": now
+            }
+            
+            # 尝试创建新会话
+            try:
+                logging.info(f"ChatService.update_session - 尝试创建/更新会话: {session_data}")
                 
-                result = create('chat_sessions', session_data)
-                
-                # 检查结果是否为协程并等待它
-                if asyncio.iscoroutine(result):
-                    final_result = await result
-                    logging.info(f"ChatService.update_session - 异步创建结果: {final_result}")
-                    return final_result
-                else:
-                    logging.info(f"ChatService.update_session - 同步创建结果: {result}")
-                    return result
-            else:
-                # 更新现有会话
-                session = sessions[0]
-                session_id_db = session.get('id')
-                
-                # 准备更新数据
-                update_data = {
-                    "updated_at": now,
-                    "message_count": session.get('message_count', 0) + 1
-                }
-                
-                if title:
-                    update_data["title"] = title
+                # 使用upsert操作 - 如果记录存在则更新，不存在则创建
+                # 这样可以避免先查询再更新的两步操作
+                result = None
+                try:
+                    # 首先尝试更新现有记录
+                    update_result = update('chat_sessions', session_id, session_data)
+                    if asyncio.iscoroutine(update_result):
+                        result = await asyncio.wait_for(update_result, timeout=TIMEOUT_SECONDS)
+                    else:
+                        result = update_result
                     
-                if last_message:
-                    update_data["last_message"] = last_message
+                    logging.info(f"ChatService.update_session - 更新结果: {result}")
                     
-                if last_message_time:
-                    update_data["last_message_time"] = last_message_time
+                    # 如果更新失败，尝试创建新记录
+                    if not result:
+                        session_data["created_at"] = now  # 添加创建时间
+                        create_result = create('chat_sessions', session_data)
+                        if asyncio.iscoroutine(create_result):
+                            result = await asyncio.wait_for(create_result, timeout=TIMEOUT_SECONDS)
+                        else:
+                            result = create_result
+                        logging.info(f"ChatService.update_session - 创建结果: {result}")
+                except (asyncio.TimeoutError, FuturesTimeoutError) as e:
+                    logging.error(f"ChatService.update_session - 操作超时: {str(e)}")
+                    # 返回原始数据而不抛出异常，让流程继续
+                    return session_data
+                except Exception as e:
+                    logging.error(f"ChatService.update_session - 操作失败: {str(e)}")
+                    # 返回原始数据而不抛出异常，让流程继续
+                    return session_data
                 
-                # 更新会话
-                logging.info(f"ChatService.update_session - 更新会话: session_id_db={session_id_db}, update_data={update_data}")
-                result = update('chat_sessions', session_id_db, update_data)
+                return result or session_data
                 
-                # 检查结果是否为协程并等待它
-                if asyncio.iscoroutine(result):
-                    final_result = await result
-                    logging.info(f"ChatService.update_session - 异步更新结果: {final_result}")
-                    return final_result
-                else:
-                    logging.info(f"ChatService.update_session - 同步更新结果: {result}")
-                    return result
+            except Exception as e:
+                logging.error(f"ChatService.update_session - 创建/更新会话失败: {str(e)}")
+                # 返回原始数据而不抛出异常，让流程继续
+                return session_data
         except Exception as e:
             logging.error(f"ChatService.update_session - 更新会话信息失败: {str(e)}")
             import traceback
