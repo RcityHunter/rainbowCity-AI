@@ -4,7 +4,6 @@ from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from pydantic import BaseModel, Field, EmailStr, validator
 from typing import Dict, Any, Optional, List, Union
 from datetime import datetime, timedelta
-import jwt
 import uuid
 import re
 import logging
@@ -12,19 +11,30 @@ import os
 import asyncio
 from functools import wraps
 
-from app.db import db_session, query
+from app.db import db_session, query, create, update as db_update
 from app.models.user import User
 from app.models.invite import InviteCode
 from app.models.enums import VIPLevel, UserRole
+
+# 导入认证工具类
+from app.utils.auth_utils import (
+    verify_password, 
+    get_password_hash, 
+    get_user, 
+    authenticate_user, 
+    create_access_token, 
+    get_current_user, 
+    get_current_active_user
+)
 
 # 创建路由器
 router = APIRouter(prefix="/auth", tags=["用户认证"])
 
 # 配置 OAuth2 密码流
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/login")
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/login")
 
 # 从环境变量获取 SECRET_KEY
-SECRET_KEY = os.environ.get("SECRET_KEY", "your-secret-key-for-jwt")
+SECRET_KEY = os.environ.get("JWT_SECRET_KEY", "rainbowcity_default_secret_key")
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24 * 7  # 7 天
 
@@ -112,86 +122,23 @@ def is_strong_password(password: str) -> bool:
 def generate_personal_invite_code() -> str:
     return f"INV-{uuid.uuid4().hex[:8].upper()}"
 
-# 创建 JWT token
-def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
-    to_encode = data.copy()
-    if expires_delta:
-        expire = datetime.utcnow() + expires_delta
-    else:
-        expire = datetime.utcnow() + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
-    to_encode.update({"exp": expire})
-    encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
-    return encoded_jwt
-
-# 用户认证依赖
-async def get_current_user(token: str = Depends(oauth2_scheme)):
-    credentials_exception = HTTPException(
-        status_code=status.HTTP_401_UNAUTHORIZED,
-        detail="Could not validate credentials",
-        headers={"WWW-Authenticate": "Bearer"},
-    )
+# 用户认证依赖 - 使用新的认证工具类
+async def get_current_user_from_db(token: str = Depends(oauth2_scheme)):
+    """
+    从数据库获取当前用户，兼容旧的数据库查询方式
+    """
     try:
-        # 解码 token
-        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-        user_id = payload.get("user_id")
-        if user_id is None:
-            raise credentials_exception
-            
-        # 使用正确的ID字段查询用户
-        logging.info(f"Searching for user with ID: {user_id}")
-        
-        # 尝试直接使用ID查询
-        users_result = query('users', {'id': user_id})
-        
-        # Check if the result is a coroutine and await it if needed
-        if asyncio.iscoroutine(users_result):
-            users = await users_result
-        else:
-            users = users_result
-        
-        # 如果没有找到用户，尝试使用邮箱查询
-        if not users or len(users) == 0:
-            logging.info("User not found by ID, trying to find by email...")
-            # 尝试使用最近登录的用户邮箱查询
-            email_from_token = payload.get("email")
-            logging.info(f"Trying email lookup for user: {payload.get('email')}")
-            users_result = query('users', {'email': payload.get('email')})
-            
-            # Check if the result is a coroutine and await it if needed
-            if asyncio.iscoroutine(users_result):
-                users = await users_result
-            else:
-                users = users_result
-        
-        # 如果仍然没有找到用户，尝试直接使用ID查询
-        if not users or len(users) == 0:
-            logging.info("User not found by email, trying direct ID lookup...")
-            try:
-                # 尝试直接使用ID查询
-                direct_id = user_id.split(':')[1] if ':' in user_id else user_id
-                logging.info(f"Attempting direct database query for ID: {direct_id}")
-                
-                # 尝试使用直接查询
-                direct_result_or_coroutine = query(user_id, {})
-                
-                # Check if the result is a coroutine and await it if needed
-                if asyncio.iscoroutine(direct_result_or_coroutine):
-                    direct_result = await direct_result_or_coroutine
-                else:
-                    direct_result = direct_result_or_coroutine
-                
-                if direct_result and len(direct_result) > 0:
-                    users = [direct_result[0]]
-            except Exception as e:
-                logging.error(f"Error in direct ID lookup: {e}")
-        
-        if not users or len(users) == 0:
-            raise credentials_exception
-            
-        user_data = users[0]
-        return user_data
-    except jwt.PyJWTError:
-        raise credentials_exception
+        # 使用新的认证工具类获取用户
+        user = await get_current_user(token)
+        if user:
+            return user
+    except Exception as e:
+        logging.error(f"Error getting user from token: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Could not validate credentials",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
 
 # 注册路由
 @router.post("/register", response_model=TokenResponse)
@@ -243,17 +190,13 @@ async def register(user: UserRegister):
             invite_benefits = invite.get('benefits', {})
             
             # 更新邀请码使用次数
-            from app.db import update as db_update
             db_update('invite_code', invite.get('id'), {'used_count': invite.get('used_count', 0) + 1})
             
-        # 生成密码哈希
-        from werkzeug.security import generate_password_hash
-        password_hash = generate_password_hash(user.password, method='pbkdf2:sha256', salt_length=8)
+        # 使用新的密码哈希函数
+        password_hash = get_password_hash(user.password)
         
         # 打印密码哈希信息以进行调试
         logging.info(f"Generated password hash: {password_hash}")
-        logging.info(f"Password hash type: {type(password_hash)}")
-        logging.info(f"Password hash length: {len(password_hash)}")
         
         # 准备用户数据
         user_data = {
@@ -273,25 +216,14 @@ async def register(user: UserRegister):
         }
         
         # 创建用户
-        from app.db import create
-        
-        # 记录创建前的用户数据
-        logging.info(f"User data before create: {user_data}")
-        logging.info(f"Password hash in user_data: {user_data.get('password_hash')}")
-        
         result = create('users', user_data)
-        
-        # 记录创建后的结果
-        logging.info(f"Create result type: {type(result)}")
-        logging.info(f"Create result: {result}")
-        logging.info(f"Password hash in result: {result.get('password_hash') if result else None}")
         
         if not result:
             raise HTTPException(status_code=500, detail="Failed to create user")
             
         # 生成 JWT token
         token_data = {
-            "user_id": result.get('id'),
+            "sub": f"users:{result.get('id')}",  # 使用标准JWT声明格式
             "email": user.email
         }
         access_token = create_access_token(token_data)
@@ -300,13 +232,17 @@ async def register(user: UserRegister):
         return {
             "access_token": access_token,
             "token_type": "bearer",
-            "user": result
+            "user": {
+                "id": result.get('id'),
+                "email": user.email,
+                "username": user.username,
+                "display_name": user.display_name or user.username,
+                "roles": ['normal'],
+                "vip_level": invite_benefits.get('vip_level', 'free')
+            }
         }
-        
-    except HTTPException:
-        raise
     except Exception as e:
-        logging.error(f"Error during registration: {str(e)}")
+        logging.error(f"Registration error: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Registration failed: {str(e)}")
 
 # 登录路由
@@ -316,55 +252,27 @@ async def login(form_data: OAuth2PasswordRequestForm = Depends()):
     用户登录
     """
     try:
-        # 查询用户
-        users_result = query('users', {'email': form_data.username})
+        # 使用新的认证工具类进行用户认证
+        user = await authenticate_user(form_data.username, form_data.password)
         
-        # Check if the result is a coroutine and await it if needed
-        if asyncio.iscoroutine(users_result):
-            users = await users_result
-        else:
-            users = users_result
-        
-        if not users or len(users) == 0:
+        if not user:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Incorrect email or password",
                 headers={"WWW-Authenticate": "Bearer"},
             )
-            
-        user = users[0]
         
-        # 验证密码
-        from werkzeug.security import check_password_hash
-        password_hash = user.get('password_hash', '')
-        logging.info(f"Stored password hash: {password_hash}")
-        logging.info(f"Attempting to verify password for user: {user.get('email')}")
-        
-        # Check if the password hash is valid (should contain the hash, not just the method)
-        if not password_hash or password_hash == 'pbkdf2:sha256':
-            logging.error(f"Invalid password hash format: {password_hash}")
-            # For this specific user, allow login with any password for debugging
-            # TEMPORARY FIX - REMOVE IN PRODUCTION
-            if user.get('email') == '123455@qq.com':
-                logging.warning("Allowing login with test account despite invalid hash")
-                pass  # Allow login to continue
-            else:
-                raise HTTPException(
-                    status_code=status.HTTP_401_UNAUTHORIZED,
-                    detail="Account password needs reset",
-                    headers={"WWW-Authenticate": "Bearer"},
-                )
-        elif not check_password_hash(password_hash, form_data.password):
-            logging.warning(f"Password verification failed for user: {user.get('email')}")
+        # 检查用户是否激活
+        if not user.get('is_activated', False):
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Incorrect email or password",
+                detail="Account is not activated",
                 headers={"WWW-Authenticate": "Bearer"},
             )
             
         # 生成 JWT token
         token_data = {
-            "user_id": user.get('id'),
+            "sub": f"users:{user.get('id')}",  # 使用标准JWT声明格式
             "email": user.get('email')
         }
         access_token = create_access_token(token_data)
@@ -373,7 +281,14 @@ async def login(form_data: OAuth2PasswordRequestForm = Depends()):
         return {
             "access_token": access_token,
             "token_type": "bearer",
-            "user": user
+            "user": {
+                "id": user.get('id'),
+                "email": user.get('email'),
+                "username": user.get('username'),
+                "display_name": user.get('display_name'),
+                "roles": user.get('roles', ['normal']),
+                "vip_level": user.get('vip_level', 'free')
+            }
         }
         
     except HTTPException:

@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { isAuthenticated, getCurrentUser } from '../services/auth_service';
 import './AiChat.dark.css';
 import ChatSidebar from './ChatSidebar';
+import MemoryContext from './MemoryContext';
 
 // 消息类型枚举
 const MessageType = {
@@ -28,6 +29,11 @@ function AiChat() {
   const [isLoggedIn, setIsLoggedIn] = useState(false);
   // 用户状态 - 当前未使用但保留以便后续功能开发
   const [user] = useState(null);
+  
+  // 记忆系统状态
+  const [userMemories, setUserMemories] = useState([]);
+  const [sessionSummary, setSessionSummary] = useState(null);
+  const [showMemoryContext, setShowMemoryContext] = useState(true);
   
   // 状态管理
   const [messages, setMessages] = useState([
@@ -160,6 +166,47 @@ function AiChat() {
       timers.forEach(timer => clearTimeout(timer));
     };
   }, [messages]);
+  
+  // 当消息更新时，尝试获取最新的记忆上下文
+  useEffect(() => {
+    // 当消息数量增加且是对话进行中时，每5条消息更新一次记忆上下文
+    if (isLoggedIn && sessionId && messages.length > 0 && messages.length % 5 === 0) {
+      fetchMemoryContext();
+    }
+  }, [messages.length, isLoggedIn, sessionId]);
+  
+  // 获取用户记忆和会话摘要
+  const fetchMemoryContext = async () => {
+    if (!sessionId || !isLoggedIn) return;
+    
+    try {
+      // 获取用户记忆
+      const memoriesResponse = await fetch(`/api/memory/user/${localStorage.getItem('userId')}?limit=5`, {
+        headers: {
+          'Authorization': `Bearer ${localStorage.getItem('token')}`
+        }
+      });
+      
+      if (memoriesResponse.ok) {
+        const memoriesData = await memoriesResponse.json();
+        setUserMemories(memoriesData.memories || []);
+      }
+      
+      // 获取会话摘要
+      const summaryResponse = await fetch(`/api/memory/summary/${sessionId}`, {
+        headers: {
+          'Authorization': `Bearer ${localStorage.getItem('token')}`
+        }
+      });
+      
+      if (summaryResponse.ok) {
+        const summaryData = await summaryResponse.json();
+        setSessionSummary(summaryData.summary || null);
+      }
+    } catch (error) {
+      console.error('获取记忆上下文失败:', error);
+    }
+  };
   
   // 生成UUID函数
   function generateUUID() {
@@ -427,18 +474,19 @@ function AiChat() {
     } catch (error) {
       console.error('选择对话失败:', error);
       setError(error.message || String(error));
-      // 设置一个错误消息
-      setMessages([
-        {
-          id: `error-${Date.now()}`,
-          role: SenderRole.SYSTEM,
-          content: `加载对话失败: ${error.message || '未知错误'}`,
-          type: MessageType.TEXT,
-          timestamp: new Date().toISOString(),
-          visible: true,
-          metadata: { error: true }
-        }
-      ]);
+      
+      // 添加错误消息
+      const errorMessage = createMessage(
+        SenderRole.SYSTEM,
+        `错误: ${error.message || '未知错误'}`,
+        MessageType.TEXT,
+        { error: true }
+      );
+      
+      setMessages(prev => [...prev, errorMessage]);
+      
+      // 发送失败时不需要特殊处理附件
+      // 附件状态已经在attachments中维护
     } finally {
       setIsLoading(false);
     }
@@ -617,6 +665,16 @@ function AiChat() {
       
       // 处理响应
       if (data.response) {
+        // 如果响应中包含记忆上下文数据
+        if (data.memory_context) {
+          if (data.memory_context.user_memories) {
+            setUserMemories(data.memory_context.user_memories);
+          }
+          if (data.memory_context.session_summary) {
+            setSessionSummary(data.memory_context.session_summary);
+          }
+        }
+        
         // 创建助手消息
         const assistantMessage = {
           ...createMessage(
@@ -714,39 +772,37 @@ function AiChat() {
       
       setMessages(prev => [...prev, errorMessage]);
       
-      // 如果发送失败，将最近使用的图片附件添加回附件列表
-      if (imageAttachment) {
-        setAttachments([imageAttachment]);
-      }
-} finally {
-  setIsLoading(false);
-}
-};
-
-// 处理工具调用
-const handleToolAction = (toolId, action) => {
-  // 如果是导航到其他页面
-  if (action === 'navigate') {
-    const toolRoutes = {
-      'frequency_generator': '/frequency-generator',
-      'ai_id_generator': '/ai-id-generator',
-      'relationship_manager': '/ai-relationships'
-    };
-    
-    if (toolRoutes[toolId]) {
-      navigate(toolRoutes[toolId]);
+      // 发送失败时不需要特殊处理附件
+      // 附件状态已经在attachments中维护
+    } finally {
+      setIsLoading(false);
     }
-  }
-};
+  };
 
-// 保存对话到数据库
-const saveConversation = async (messageList, conversationId = null) => {
-  console.log('===== saveConversation 开始执行 =====');
-  // ...
-};
+  // 处理工具调用
+  const handleToolAction = (toolId, action) => {
+    // 如果是导航到其他页面
+    if (action === 'navigate') {
+      const toolRoutes = {
+        'frequency_generator': '/frequency-generator',
+        'ai_id_generator': '/ai-id-generator',
+        'relationship_manager': '/ai-relationships'
+      };
+      
+      if (toolRoutes[toolId]) {
+        navigate(toolRoutes[toolId]);
+      }
+    }
+  };
 
-// 渲染消息内容
-const renderMessageContent = (message) => {
+  // 保存对话到数据库
+  const saveConversation = async (messageList, conversationId = null) => {
+    console.log('===== saveConversation 开始执行 =====');
+    // ...
+  };
+
+  // 渲染消息内容
+  const renderMessageContent = (message) => {
     // 准备要显示的内容，如果在打字中则使用displayedContent
     const contentToShow = message.isTyping ? message.displayedContent : message.content;
     
@@ -899,228 +955,238 @@ const renderMessageContent = (message) => {
         onCreateNewChat={handleCreateNewChat}
         isLoading={isLoadingConversations}
       />
-      <div className="messages-container">
-        {messages
-          .filter(message => message.visible)
-          .map((message) => (
-            <div 
-              key={message.id} 
-              className={`message-wrapper ${message.role === SenderRole.ASSISTANT ? 'assistant-wrapper' : 
-                         message.role === SenderRole.USER ? 'user-wrapper' : 'system-wrapper'}`}
-            >
+      <div className="chat-main-container">
+        {/* 记忆上下文组件 */}
+        <MemoryContext 
+          memories={userMemories} 
+          sessionSummary={sessionSummary} 
+          isVisible={showMemoryContext && (userMemories.length > 0 || sessionSummary !== null)}
+        />
+        
+        {/* 聊天消息区域 */}
+        <div className="chat-messages" ref={messagesEndRef}>
+          {messages
+            .filter(message => message.visible)
+            .map((message) => (
               <div 
-                className={`message ${message.role === SenderRole.ASSISTANT ? 'assistant' : 
-                           message.role === SenderRole.USER ? 'user' : 'system'} 
-                           ${message.error ? 'error' : ''}`}
+                key={message.id} 
+                className={`message-wrapper ${message.role === SenderRole.ASSISTANT ? 'assistant-wrapper' : 
+                           message.role === SenderRole.USER ? 'user-wrapper' : 'system-wrapper'}`}
               >
+                <div 
+                  className={`message ${message.role === SenderRole.ASSISTANT ? 'assistant' : 
+                             message.role === SenderRole.USER ? 'user' : 'system'} 
+                             ${message.error ? 'error' : ''}`}
+                >
+                  <div className="message-role">
+                    {message.role === SenderRole.USER ? '你' : 
+                     message.role === SenderRole.ASSISTANT ? '彩虹城AI' : 
+                     '系统'}
+                    <span className="message-time">
+                      {new Date(message.timestamp).toLocaleTimeString('zh-CN', {hour: '2-digit', minute: '2-digit'})}
+                    </span>
+                  </div>
+                  {renderMessageContent(message)}
+                </div>
+              </div>
+            ))}
+          
+          {isLoading && (
+            <div className="message-wrapper assistant-wrapper">
+              <div className="message assistant">
                 <div className="message-role">
-                  {message.role === SenderRole.USER ? '你' : 
-                   message.role === SenderRole.ASSISTANT ? '彩虹城AI' : 
-                   '系统'}
+                  彩虹城AI
                   <span className="message-time">
-                    {new Date(message.timestamp).toLocaleTimeString('zh-CN', {hour: '2-digit', minute: '2-digit'})}
+                    {new Date().toLocaleTimeString('zh-CN', {hour: '2-digit', minute: '2-digit'})}
                   </span>
                 </div>
-                {renderMessageContent(message)}
-              </div>
-            </div>
-        ))}
-        
-        {isLoading && (
-          <div className="message-wrapper assistant-wrapper">
-            <div className="message assistant">
-              <div className="message-role">
-                彩虹城AI
-                <span className="message-time">
-                  {new Date().toLocaleTimeString('zh-CN', {hour: '2-digit', minute: '2-digit'})}
-                </span>
-              </div>
-              <div className="thinking">
-                <div className="thinking-dots">
-                  <span></span>
-                  <span></span>
-                  <span></span>
+                <div className="thinking">
+                  <div className="thinking-dots">
+                    <span></span>
+                    <span></span>
+                    <span></span>
+                  </div>
                 </div>
               </div>
+            </div>
+          )}
+          
+          <div ref={messagesEndRef} />
+        </div>
+        
+        {/* 活动工具区域 */}
+        {activeTools.length > 0 && (
+          <div className="active-tools">
+            <div className="tools-header">可用工具</div>
+            <div className="tools-list">
+              {activeTools.map(tool => (
+                <div key={tool.id} className="tool-item">
+                  <div className="tool-name">{tool.name}</div>
+                  <button 
+                    className="tool-open-button"
+                    onClick={() => handleToolAction(tool.id, 'navigate')}
+                  >
+                    打开
+                  </button>
+                </div>
+              ))}
             </div>
           </div>
         )}
         
-        <div ref={messagesEndRef} />
-      </div>
-      
-      {/* 活动工具区域 */}
-      {activeTools.length > 0 && (
-        <div className="active-tools">
-          <div className="tools-header">可用工具</div>
-          <div className="tools-list">
-            {activeTools.map(tool => (
-              <div key={tool.id} className="tool-item">
-                <div className="tool-name">{tool.name}</div>
+        {renderSavedImages()}
+        
+        <form onSubmit={handleSubmit} className="input-form">
+          <div className="chat-settings">
+            <label className="agent-toggle">
+              <input 
+                type="checkbox" 
+                checked={useAgentChat} 
+                onChange={() => setUseAgentChat(!useAgentChat)}
+              />
+              <span className="toggle-label">{useAgentChat ? "AI-Agent模式已启用" : "AI-Agent模式已关闭"}</span>
+            </label>
+          </div>
+          
+          {renderAttachmentPreviews()}
+          
+          <div className="input-controls">
+            <div 
+              className="upload-container"
+              onMouseEnter={() => setIsUploadHovered(true)}
+              onMouseLeave={() => setIsUploadHovered(false)}
+            >
+              <button 
+                type="button" 
+                className="attachment-button"
+                disabled={isLoading}
+              >
+                <i className="attachment-icon"></i>
+              </button>
+              
+              {/* 悬停时显示的上传选项 */}
+              <div className={`upload-options ${isUploadHovered ? 'visible' : ''}`}>
+                {/* 图片上传 */}
                 <button 
-                  className="tool-open-button"
-                  onClick={() => handleToolAction(tool.id, 'navigate')}
+                  type="button" 
+                  className="upload-option-button image-upload"
+                  onClick={() => imageInputRef.current.click()}
+                  title="上传图片"
                 >
-                  打开
+                  <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="#a18cd1">
+                    <path d="M21 17h-2v-4h-4v-2h4V7h2v4h4v2h-4v4z"/>
+                    <path d="M16 21H5c-1.1 0-2-.9-2-2V8c0-1.1.9-2 2-2h11c1.1 0 2 .9 2 2v13h-2zm-11-2h9V8H5v11z"/>
+                    <path d="M7 17l2.5-3 1.5 2 2-2.5 3 3.5H7z"/>
+                    <circle cx="8.5" cy="10.5" r="1.5"/>
+                  </svg>
+                </button>
+                
+                {/* 音频上传 */}
+                <button 
+                  type="button" 
+                  className="upload-option-button audio-upload"
+                  onClick={() => audioInputRef.current.click()}
+                  title="上传音频"
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="#a18cd1">
+                    <path d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3z"/>
+                    <path d="M17 11c0 2.76-2.24 5-5 5s-5-2.24-5-5H5c0 3.53 2.61 6.43 6 6.92V21h2v-3.08c3.39-.49 6-3.39 6-6.92h-2z"/>
+                    <path d="M15 5.5c0-.83-.67-1.5-1.5-1.5s-1.5.67-1.5 1.5.67 1.5 1.5 1.5 1.5-.67 1.5-1.5z"/>
+                    <path d="M12 3c-.55 0-1 .45-1 1s.45 1 1 1 1-.45 1-1-.45-1-1-1z"/>
+                    <path d="M19 11h2c0 4.97-4.03 9-9 9s-9-4.03-9-9h2c0 3.87 3.13 7 7 7s7-3.13 7-7z"/>
+                  </svg>
+                </button>
+                
+                {/* 视频上传 */}
+                <button 
+                  type="button" 
+                  className="upload-option-button video-upload"
+                  onClick={() => videoInputRef.current.click()}
+                  title="上传视频"
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="#a18cd1">
+                    <path d="M17 10.5V7c0-.55-.45-1-1-1H4c-.55 0-1 .45-1 1v10c0 .55.45 1 1 1h12c.55 0 1-.45 1-1v-3.5l4 4v-11l-4 4z"/>
+                  </svg>
+                </button>
+                
+                {/* 文档上传 */}
+                <button 
+                  type="button" 
+                  className="upload-option-button document-upload"
+                  onClick={() => documentInputRef.current.click()}
+                  title="上传文档"
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="#a18cd1">
+                    <path d="M14 2H6c-1.1 0-1.99.9-1.99 2L4 20c0 1.1.89 2 1.99 2H18c1.1 0 2-.9 2-2V8l-6-6zm2 16H8v-2h8v2zm0-4H8v-2h8v2zm-3-5V3.5L18.5 9H13z"/>
+                  </svg>
                 </button>
               </div>
-            ))}
-          </div>
-        </div>
-      )}
-      
-      {renderSavedImages()}
-      
-      <form onSubmit={handleSubmit} className="input-form">
-        <div className="chat-settings">
-          <label className="agent-toggle">
-            <input 
-              type="checkbox" 
-              checked={useAgentChat} 
-              onChange={() => setUseAgentChat(!useAgentChat)}
-            />
-            <span className="toggle-label">{useAgentChat ? "AI-Agent模式已启用" : "AI-Agent模式已关闭"}</span>
-          </label>
-        </div>
-        
-        {renderAttachmentPreviews()}
-        
-        <div className="input-controls">
-          <div 
-            className="upload-container"
-            onMouseEnter={() => setIsUploadHovered(true)}
-            onMouseLeave={() => setIsUploadHovered(false)}
-          >
-            <button 
-              type="button" 
-              className="attachment-button"
-              disabled={isLoading}
-            >
-              <i className="attachment-icon"></i>
-            </button>
-            
-            {/* 悬停时显示的上传选项 */}
-            <div className={`upload-options ${isUploadHovered ? 'visible' : ''}`}>
-              {/* 图片上传 */}
-              <button 
-                type="button" 
-                className="upload-option-button image-upload"
-                onClick={() => imageInputRef.current.click()}
-                title="上传图片"
-              >
-                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="#a18cd1">
-                  <path d="M21 17h-2v-4h-4v-2h4V7h2v4h4v2h-4v4z"/>
-                  <path d="M16 21H5c-1.1 0-2-.9-2-2V8c0-1.1.9-2 2-2h11c1.1 0 2 .9 2 2v13h-2zm-11-2h9V8H5v11z"/>
-                  <path d="M7 17l2.5-3 1.5 2 2-2.5 3 3.5H7z"/>
-                  <circle cx="8.5" cy="10.5" r="1.5"/>
-                </svg>
-              </button>
-              
-              {/* 音频上传 */}
-              <button 
-                type="button" 
-                className="upload-option-button audio-upload"
-                onClick={() => audioInputRef.current.click()}
-                title="上传音频"
-              >
-                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="#a18cd1">
-                  <path d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3z"/>
-                  <path d="M17 11c0 2.76-2.24 5-5 5s-5-2.24-5-5H5c0 3.53 2.61 6.43 6 6.92V21h2v-3.08c3.39-.49 6-3.39 6-6.92h-2z"/>
-                  <path d="M15 5.5c0-.83-.67-1.5-1.5-1.5s-1.5.67-1.5 1.5.67 1.5 1.5 1.5 1.5-.67 1.5-1.5z"/>
-                  <path d="M12 3c-.55 0-1 .45-1 1s.45 1 1 1 1-.45 1-1-.45-1-1-1z"/>
-                  <path d="M19 11h2c0 4.97-4.03 9-9 9s-9-4.03-9-9h2c0 3.87 3.13 7 7 7s7-3.13 7-7z"/>
-                </svg>
-              </button>
-              
-              {/* 视频上传 */}
-              <button 
-                type="button" 
-                className="upload-option-button video-upload"
-                onClick={() => videoInputRef.current.click()}
-                title="上传视频"
-              >
-                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="#a18cd1">
-                  <path d="M17 10.5V7c0-.55-.45-1-1-1H4c-.55 0-1 .45-1 1v10c0 .55.45 1 1 1h12c.55 0 1-.45 1-1v-3.5l4 4v-11l-4 4z"/>
-                </svg>
-              </button>
-              
-              {/* 文档上传 */}
-              <button 
-                type="button" 
-                className="upload-option-button document-upload"
-                onClick={() => documentInputRef.current.click()}
-                title="上传文档"
-              >
-                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="#a18cd1">
-                  <path d="M14 2H6c-1.1 0-1.99.9-1.99 2L4 20c0 1.1.89 2 1.99 2H18c1.1 0 2-.9 2-2V8l-6-6zm2 16H8v-2h8v2zm0-4H8v-2h8v2zm-3-5V3.5L18.5 9H13z"/>
-                </svg>
-              </button>
             </div>
+            
+            {/* 隐藏的文件输入 */}
+            <input
+              type="file"
+              ref={fileInputRef}
+              onChange={handleFileUpload}
+              style={{ display: 'none' }}
+              multiple
+              accept="image/*,audio/*,application/*,text/*"
+            />
+            
+            <input
+              type="file"
+              ref={imageInputRef}
+              onChange={handleImageUpload}
+              style={{ display: 'none' }}
+              multiple
+              accept="image/*"
+            />
+            
+            <input
+              type="file"
+              ref={audioInputRef}
+              onChange={handleAudioUpload}
+              style={{ display: 'none' }}
+              multiple
+              accept="audio/*"
+            />
+            
+            <input
+              type="file"
+              ref={videoInputRef}
+              onChange={handleVideoUpload}
+              style={{ display: 'none' }}
+              multiple
+              accept="video/*"
+            />
+            
+            <input
+              type="file"
+              ref={documentInputRef}
+              onChange={handleDocumentUpload}
+              style={{ display: 'none' }}
+              multiple
+              accept="application/*,text/*,.pdf,.doc,.docx,.txt,.xls,.xlsx,.ppt,.pptx"
+            />
+            
+            <input
+              value={textInput}
+              onChange={handleInputChange}
+              placeholder="输入您的问题..."
+              className="chat-input"
+              disabled={isLoading}
+            />
+            
+            <button 
+              type="submit" 
+              disabled={isLoading || (textInput.trim() === '' && attachments.length === 0)}
+              className="send-button"
+            >
+              <i className="send-icon"></i>
+            </button>
           </div>
-          
-          {/* 隐藏的文件输入 */}
-          <input
-            type="file"
-            ref={fileInputRef}
-            onChange={handleFileUpload}
-            style={{ display: 'none' }}
-            multiple
-            accept="image/*,audio/*,application/*,text/*"
-          />
-          
-          <input
-            type="file"
-            ref={imageInputRef}
-            onChange={handleImageUpload}
-            style={{ display: 'none' }}
-            multiple
-            accept="image/*"
-          />
-          
-          <input
-            type="file"
-            ref={audioInputRef}
-            onChange={handleAudioUpload}
-            style={{ display: 'none' }}
-            multiple
-            accept="audio/*"
-          />
-          
-          <input
-            type="file"
-            ref={videoInputRef}
-            onChange={handleVideoUpload}
-            style={{ display: 'none' }}
-            multiple
-            accept="video/*"
-          />
-          
-          <input
-            type="file"
-            ref={documentInputRef}
-            onChange={handleDocumentUpload}
-            style={{ display: 'none' }}
-            multiple
-            accept="application/*,text/*,.pdf,.doc,.docx,.txt,.xls,.xlsx,.ppt,.pptx"
-          />
-          
-          <input
-            value={textInput}
-            onChange={handleInputChange}
-            placeholder="输入您的问题..."
-            className="chat-input"
-            disabled={isLoading}
-          />
-          
-          <button 
-            type="submit" 
-            disabled={isLoading || (!textInput.trim() && attachments.length === 0)} 
-            className="send-button"
-          >
-            发送
-          </button>
-        </div>
-      </form>
+        </form>
+      </div>
     </div>
   );
 }
