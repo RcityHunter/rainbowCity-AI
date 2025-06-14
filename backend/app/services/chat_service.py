@@ -99,11 +99,15 @@ class ChatService:
         logging.info(f"ChatService.update_session - 开始更新会话: session_id={session_id}, user_id={user_id}")
         try:
             # 查询会话是否存在
-            logging.info(f"ChatService.update_session - 查询会话: session_id={session_id}")
+            logging.info(f"ChatService.update_session - 查询会话: session_id={session_id}") # 确保完整记录会话ID
             import asyncio
             
+            # 确保会话ID完整性
+            session_id_full = str(session_id).strip()
+            logging.info(f"ChatService.update_session - 使用完整会话ID查询: {session_id_full} (长度: {len(session_id_full)})")
+            
             # 先使用id字段查询
-            sessions_result = query('chat_sessions', {'id': session_id})
+            sessions_result = query('chat_sessions', {'id': session_id_full})
             
             # 检查结果是否为协程并等待它
             if asyncio.iscoroutine(sessions_result):
@@ -116,7 +120,7 @@ class ChatService:
             # 如果没有找到，尝试使用session_id字段查询
             if not sessions or len(sessions) == 0:
                 logging.info(f"ChatService.update_session - 使用id字段未找到会话，尝试使用session_id字段")
-                sessions_result = query('chat_sessions', {'session_id': session_id})
+                sessions_result = query('chat_sessions', {'session_id': session_id_full})
                 
                 # 检查结果是否为协程并等待它
                 if asyncio.iscoroutine(sessions_result):
