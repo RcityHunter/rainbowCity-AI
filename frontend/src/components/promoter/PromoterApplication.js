@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Card, Button, Form, Radio, Alert, Spin, Typography, Divider } from 'antd';
-import { UserOutlined, TeamOutlined, CheckCircleOutlined, CloseCircleOutlined } from '@ant-design/icons';
+import { UserOutlined, TeamOutlined, CheckCircleOutlined } from '@ant-design/icons';
 import axios from 'axios';
 import './Promoter.css';
 
@@ -36,7 +36,7 @@ const PromoterApplication = ({ user }) => {
     };
 
     fetchPromoterStatus();
-  }, []);
+  }, []); // 依赖项为空数组，仅在组件挂载时执行一次
 
   // 提交申请
   const handleSubmit = async (values) => {

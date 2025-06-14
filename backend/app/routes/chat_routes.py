@@ -12,6 +12,9 @@ from dotenv import load_dotenv
 # 导入AI-Agent模块
 from app.agent.ai_assistant import AIAssistant
 
+# 导入记忆系统模块
+from app.services.chat_memory_integration import ChatMemoryIntegration
+
 # 加载环境变量
 load_dotenv()
 
@@ -23,6 +26,9 @@ client = OpenAI(api_key=OPENAI_API_KEY)
 
 # 创建AI-Agent实例
 ai_assistant = AIAssistant(model_name="gpt-3.5-turbo")
+
+# 创建聊天记忆集成实例
+chat_memory = ChatMemoryIntegration()
 
 # 创建API路由器
 router = APIRouter(tags=["聊天"])
@@ -260,7 +266,7 @@ async def chat_test(request: ChatRequest):
     
     return generate()
 
-# 使用AI-Agent的聊天端点
+# 使用AI-Agent的聊天端点，集成记忆系统
 @router.post("/chat-agent")
 async def chat_agent(request: ChatRequest):
     try:
@@ -280,14 +286,59 @@ async def chat_agent(request: ChatRequest):
         # 检查是否有图片消息
         has_image = any(msg.type == "image" for msg in messages if hasattr(msg, "type"))
         
+        # 使用记忆系统增强上下文
+        memory_context = {}
+        try:
+            # 获取相关记忆和上下文增强
+            memory_context = await chat_memory.enhance_response_with_memories(
+                user_id=user_id,
+                user_message=user_message,
+                current_session_id=session_id
+            )
+            
+            # 如果有相关记忆，将其添加到上下文中
+            enhanced_context = memory_context.get("context_enhancement", "")
+            if enhanced_context:
+                print(f"使用记忆增强上下文: {enhanced_context[:100]}...")
+        except Exception as e:
+            print(f"获取记忆上下文失败: {str(e)}")
+        
         # 使用AI-Agent处理请求
         try:
             # 设置会话信息
             ai_assistant.context_builder.session_id = session_id
             ai_assistant.context_builder.user_id = user_id
             
-            # 处理用户查询
-            response = ai_assistant.process_query(user_message)
+            # 如果有记忆上下文，添加到处理中
+            context_prefix = ""
+            if memory_context and "context_enhancement" in memory_context and memory_context["context_enhancement"]:
+                context_prefix = f"用户上下文信息:\n{memory_context['context_enhancement']}\n\n用户当前问题: "
+            
+            # 处理用户查询，添加记忆上下文
+            enhanced_query = f"{context_prefix}{user_message}" if context_prefix else user_message
+            response = ai_assistant.process_query(enhanced_query)
+            
+            # 保存消息到记忆系统
+            try:
+                # 保存用户消息
+                await chat_memory.process_chat_message(
+                    session_id=session_id,
+                    user_id=user_id,
+                    role="user",
+                    content=user_message,
+                    content_type="text"
+                )
+                
+                # 保存AI响应
+                await chat_memory.process_chat_message(
+                    session_id=session_id,
+                    user_id=user_id,
+                    role="assistant",
+                    content=response,
+                    content_type="text"
+                )
+            except Exception as e:
+                print(f"保存消息到记忆系统失败: {str(e)}")
             
             # 返回响应
             return {
@@ -299,9 +350,11 @@ async def chat_agent(request: ChatRequest):
                         "model": "agent-model",
                         "created": int(time.time()),
                         "session_id": session_id,
-                        "turn_id": request.turn_id
+                        "turn_id": request.turn_id,
+                        "memory_enhanced": bool(context_prefix)
                     }
-                }
+                },
+                "memory_context": memory_context if memory_context else None
             }
         except Exception as e:
             print(f"AI-Agent处理失败: {str(e)}")

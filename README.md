@@ -2,6 +2,25 @@
 
 ![Rainbow City Logo](frontend/public/logo.png)
 
+## 目录
+
+- [项目概述](#项目概述)
+- [主要功能](#主要功能)
+  - [彩虹城AI聊天](#彩虹城ai聊天)
+  - [一体七翼生成器 (AI-ID)](#一体七翼生成器-ai-id)
+  - [频率编号生成器](#频率编号生成器)
+  - [关系管理](#关系管理)
+- [技术栈](#技术栈)
+- [安装指南](#安装指南)
+- [使用指南](#使用指南)
+- [特色亮点](#特色亮点)
+- [API 调用指南](#api-调用指南)
+- [Agent系统架构](#agent系统架构)
+- [贡献指南](#贡献指南)
+- [开发环境配置问题解决](#开发环境配置问题解决)
+- [许可证](#许可证)
+- [联系方式](#联系方式)
+
 ## 项目概述
 
 Rainbow City（彩虹城）是一个创新的AI交互平台，集成了一体七翼系统、AI聊天和关系管理功能。该系统采用现代化的深色主题设计，提供直观的用户界面和流畅的交互体验，旨在创建一个全面的AI共生社区生态系统。
@@ -399,6 +418,42 @@ self.tool_invoker.register_tool(
 ## 贡献指南
 
 我们欢迎社区贡献！如果您想参与项目开发，请遵循以下步骤：
+
+1. Fork 本仓库
+2. 创建您的特性分支 (`git checkout -b feature/amazing-feature`)
+3. 提交您的更改 (`git commit -m 'Add some amazing feature'`)
+4. 推送到分支 (`git push origin feature/amazing-feature`)
+5. 开启一个 Pull Request
+
+## 开发环境配置问题解决
+
+### React开发服务器配置问题
+
+如果在启动前端开发服务器时遇到以下错误：
+
+```
+Invalid options object. Dev Server has been initialized using an options object that does not match the API schema.
+- options.allowedHosts[0] should be a non-empty string.
+```
+
+请确保在`frontend`目录中创建了正确的`.env`文件，包含以下内容：
+
+```
+HOST=localhost
+PORT=3000
+WDS_SOCKET_HOST=localhost
+DANGEROUSLY_DISABLE_HOST_CHECK=true
+```
+
+## 许可证
+
+本项目采用 MIT 许可证 - 详情请参阅 [LICENSE](LICENSE) 文件
+
+## 联系方式
+
+项目维护者 - [@RcityHunter](https://github.com/RcityHunter)
+
+项目链接: [https://github.com/RcityHunter/rainbowCity-AI](https://github.com/RcityHunter/rainbowCity-AI)
 
 1. Fork项目仓库
 2. 创建您的特性分支 (`git checkout -b feature/amazing-feature`)

@@ -23,7 +23,7 @@ function ChatSidebar({ conversations, onSelectConversation, onCreateNewChat }) {
     return () => {
       document.body.classList.remove('sidebar-expanded');
     };
-  }, []);
+  }, []);  // 依赖项为空数组，仅在组件挂载时执行一次
   
   // 处理搜索输入变化
   const handleSearchChange = (e) => {
