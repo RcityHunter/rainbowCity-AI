@@ -2,16 +2,17 @@
 彩虹城AI-Agent对话管理系统API路由 - FastAPI版本
 """
 
-from fastapi import APIRouter, HTTPException, Depends, Request, File, UploadFile, Form, Body
+from fastapi import APIRouter, Depends, HTTPException, Request, Body, File, UploadFile, Form
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
-from typing import Dict, Any, Optional, List, Union
-import json
-import os
+from typing import List, Optional, Dict, Any, Union
 import uuid
+import logging
+import json
+import asyncio
+import os
 import base64
 import mimetypes
-import logging
 from datetime import datetime
 
 from app.agent.ai_assistant import AIAssistant
@@ -21,9 +22,12 @@ from app.routes.auth_routes import get_current_user
 
 # 配置日志
 logging.basicConfig(level=logging.DEBUG)
+logger = logging.getLogger(__name__)
+logger.info("agent_routes.py 模块加载中 - 这应该在启动时显示")
 
 # 创建路由器
-router = APIRouter(prefix="/chat/agent", tags=["AI-Agent对话"])
+# 注意：前缀已从/api/chat-agent改为/chat-agent，因为app.py中的api_router已经有/api前缀
+router = APIRouter(prefix="/chat-agent", tags=["彩虹城 AI-Agent对话"])
 
 # 创建AI助手实例
 assistant = AIAssistant(model_name="gpt-3.5-turbo")
@@ -72,6 +76,7 @@ class ClearSessionResponse(BaseModel):
 @router.post("", response_model=ChatResponse)
 async def chat_agent(chat_data: ChatRequest):
     """AI-Agent聊天接口"""
+    logging.info(f"[调试] 收到聊天请求: session_id={chat_data.session_id}, user_id={chat_data.user_id}")
     try:
         # 获取请求数据
         messages = chat_data.messages
@@ -80,6 +85,7 @@ async def chat_agent(chat_data: ChatRequest):
         user_id = chat_data.user_id
         ai_id = chat_data.ai_id
         image_data = chat_data.image_data
+        logging.info(f"[调试] 请求数据解析成功: session_id={session_id}, user_id={user_id}")
         
         # 提取用户最后一条消息作为输入
         user_message = ""
@@ -91,14 +97,30 @@ async def chat_agent(chat_data: ChatRequest):
         # 创建AI助手实例
         ai_assistant = AIAssistant()
         
-        # 处理用户查询
-        result = ai_assistant.process_query(
-            user_input=user_message,
-            session_id=session_id,
-            user_id=user_id,
-            ai_id=ai_id,
-            image_data=image_data
-        )
+        try:
+            # 处理用户查询 - 使用异步方式调用，需要await
+            # 添加超时处理，设置为28秒（低于前端的30秒超时）
+            logging.info(f"[调试] 开始调用AI助手处理查询: session_id={session_id}, user_message='{user_message[:50]}...'")
+            result = await asyncio.wait_for(
+                ai_assistant.process_query(
+                    user_input=user_message,
+                    session_id=session_id,
+                    user_id=user_id,
+                    ai_id=ai_id,
+                    image_data=image_data
+                ),
+                timeout=28.0
+            )
+            logging.info(f"[调试] AI助手处理查询成功: session_id={session_id}")
+        except asyncio.TimeoutError:
+            logging.error(f"[调试] 处理查询超时(28秒): session_id={session_id}")
+            result = {
+                "response": "抱歉，处理您的请求超时。这可能是由于数据库查询耗时过长。请尝试发送更简短的消息或稍后再试。",
+                "session_id": session_id,
+                "has_tool_calls": False,
+                "tool_results": [],
+                "error": "处理超时"
+            }
         
         # 添加会话ID和轮次ID到响应
         if isinstance(result, dict):
@@ -111,14 +133,19 @@ async def chat_agent(chat_data: ChatRequest):
                 result["response"]["metadata"]["session_id"] = session_id
                 result["response"]["metadata"]["turn_id"] = turn_id
         
-        return result
+        # 使用JSONResponse直接返回结果，避免FastAPI尝试将其视为协程
+        response_dict = dict(result)
+        logging.info(f"[调试] 返回响应成功: session_id={session_id}")
+        return JSONResponse(content=response_dict)
     except Exception as e:
-        logging.error(f"AI-Agent聊天接口错误: {str(e)}")
-        return {
+        logging.error(f"[调试] AI-Agent聊天接口错误: {str(e)}")
+        import traceback
+        logging.error(f"[调试] 错误详情: {traceback.format_exc()}")
+        return JSONResponse(content={
             "success": False,
             "session_id": chat_data.session_id or str(uuid.uuid4()),
             "error": str(e)
-        }
+        })
 
 @router.post("/with_file", response_model=ChatResponse)
 async def chat_with_file(
@@ -221,7 +248,7 @@ async def chat_with_file(
         
         # 处理用户查询
         logging.debug("Calling AI Assistant process_query")
-        result = ai_assistant.process_query(
+        result = await ai_assistant.process_query(
             user_input=user_input,
             session_id=session_id,
             user_id=user_id,

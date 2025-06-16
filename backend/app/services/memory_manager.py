@@ -407,13 +407,16 @@ class MemoryManager:
             相关记忆列表
         """
         try:
-            # 创建记忆查询
-            memory_query = {
-                "user_id": user_id,
-                "query": query,
-                "limit": limit,
-                "sort_by": "relevance"
-            }
+            # 导入MemoryQuery模型
+            from ..models.memory_models import MemoryQuery
+            
+            # 创建记忆查询对象
+            memory_query = MemoryQuery(
+                user_id=user_id,
+                query=query,
+                limit=limit,
+                sort_by="relevance"
+            )
             
             # 搜索记忆
             memories = await MemoryService.search_memories(memory_query)

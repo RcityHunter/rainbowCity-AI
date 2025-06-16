@@ -269,105 +269,156 @@ async def chat_test(request: ChatRequest):
 # 使用AI-Agent的聊天端点，集成记忆系统
 @router.post("/chat-agent")
 async def chat_agent(request: ChatRequest):
-    try:
-        messages = request.messages
-        session_id = request.session_id
-        user_id = "user_" + session_id if session_id else "anonymous"
-        
-        # 获取用户输入
-        user_message = next((msg.content for msg in reversed(messages) if msg.role == "user"), "")
-        
-        if not user_message:
-            return JSONResponse(
-                status_code=400,
-                content={"error": "未找到用户消息"}
-            )
-        
-        # 检查是否有图片消息
-        has_image = any(msg.type == "image" for msg in messages if hasattr(msg, "type"))
-        
-        # 使用记忆系统增强上下文
-        memory_context = {}
+    # 导入超时处理模块
+    import asyncio
+    from asyncio import TimeoutError
+    import logging
+    
+    # 定义一个内部处理函数，用于超时控制
+    async def process_chat_request():
         try:
-            # 获取相关记忆和上下文增强
-            memory_context = await chat_memory.enhance_response_with_memories(
-                user_id=user_id,
-                user_message=user_message,
-                current_session_id=session_id
-            )
+            messages = request.messages
+            session_id = request.session_id
+            user_id = "user_" + session_id if session_id else "anonymous"
             
-            # 如果有相关记忆，将其添加到上下文中
-            enhanced_context = memory_context.get("context_enhancement", "")
-            if enhanced_context:
-                print(f"使用记忆增强上下文: {enhanced_context[:100]}...")
-        except Exception as e:
-            print(f"获取记忆上下文失败: {str(e)}")
-        
-        # 使用AI-Agent处理请求
-        try:
-            # 设置会话信息
-            ai_assistant.context_builder.session_id = session_id
-            ai_assistant.context_builder.user_id = user_id
+            # 获取用户输入
+            user_message = next((msg.content for msg in reversed(messages) if msg.role == "user"), "")
             
-            # 如果有记忆上下文，添加到处理中
-            context_prefix = ""
-            if memory_context and "context_enhancement" in memory_context and memory_context["context_enhancement"]:
-                context_prefix = f"用户上下文信息:\n{memory_context['context_enhancement']}\n\n用户当前问题: "
+            if not user_message:
+                return JSONResponse(
+                    status_code=400,
+                    content={"error": "未找到用户消息"}
+                )
             
-            # 处理用户查询，添加记忆上下文
-            enhanced_query = f"{context_prefix}{user_message}" if context_prefix else user_message
-            response = ai_assistant.process_query(enhanced_query)
+            # 检查是否有图片消息
+            has_image = any(msg.type == "image" for msg in messages if hasattr(msg, "type"))
             
-            # 保存消息到记忆系统
+            # 使用记忆系统增强上下文
+            memory_context = {}
             try:
-                # 保存用户消息
-                await chat_memory.process_chat_message(
-                    session_id=session_id,
+                # 获取相关记忆和上下文增强
+                memory_context = await chat_memory.enhance_response_with_memories(
                     user_id=user_id,
-                    role="user",
-                    content=user_message,
-                    content_type="text"
+                    user_message=user_message,
+                    current_session_id=session_id
                 )
                 
-                # 保存AI响应
-                await chat_memory.process_chat_message(
-                    session_id=session_id,
-                    user_id=user_id,
-                    role="assistant",
-                    content=response,
-                    content_type="text"
-                )
+                # 如果有相关记忆，将其添加到上下文中
+                enhanced_context = memory_context.get("context_enhancement", "")
+                if enhanced_context:
+                    logging.info(f"使用记忆增强上下文: {enhanced_context[:100]}...")
             except Exception as e:
-                print(f"保存消息到记忆系统失败: {str(e)}")
+                logging.error(f"获取记忆上下文失败: {str(e)}")
+                # 即使记忆增强失败，也继续处理请求
+                memory_context = {}
             
-            # 返回响应
-            return {
-                "success": True,
-                "response": {
-                    "content": response,
-                    "type": "text",
-                    "metadata": {
-                        "model": "agent-model",
-                        "created": int(time.time()),
-                        "session_id": session_id,
-                        "turn_id": request.turn_id,
-                        "memory_enhanced": bool(context_prefix)
-                    }
-                },
-                "memory_context": memory_context if memory_context else None
-            }
+            # 使用AI-Agent处理请求
+            try:
+                # 设置会话信息
+                ai_assistant.context_builder.session_id = session_id
+                ai_assistant.context_builder.user_id = user_id
+                
+                # 如果有记忆上下文，添加到处理中
+                context_prefix = ""
+                if memory_context and "context_enhancement" in memory_context and memory_context["context_enhancement"]:
+                    context_prefix = f"用户上下文信息:\n{memory_context['context_enhancement']}\n\n用户当前问题: "
+                
+                # 处理用户查询，添加记忆上下文
+                enhanced_query = f"{context_prefix}{user_message}" if context_prefix else user_message
+                
+                # 添加超时处理，最多等待25秒
+                try:
+                    response = await asyncio.wait_for(
+                        asyncio.create_task(ai_assistant.process_query(enhanced_query)),
+                        timeout=25.0  # 25秒超时
+                    )
+                except TimeoutError:
+                    logging.error("AI处理请求超时，返回默认响应")
+                    return JSONResponse(
+                        status_code=504,  # Gateway Timeout
+                        content={
+                            "error": "处理请求超时",
+                            "message": "服务器处理请求时间过长，请稍后再试或简化您的问题。"
+                        }
+                    )
+                
+                # 异步保存消息到记忆系统，但不等待完成
+                try:
+                    # 创建任务但不等待
+                    asyncio.create_task(
+                        chat_memory.process_chat_message(
+                            session_id=session_id,
+                            user_id=user_id,
+                            role="user",
+                            content=user_message,
+                            content_type="text"
+                        )
+                    )
+                    
+                    # 创建任务但不等待
+                    asyncio.create_task(
+                        chat_memory.process_chat_message(
+                            session_id=session_id,
+                            user_id=user_id,
+                            role="assistant",
+                            content=response,
+                            content_type="text"
+                        )
+                    )
+                    logging.info("已创建异步任务保存聊天消息")
+                except Exception as e:
+                    logging.error(f"创建保存消息任务失败: {str(e)}")
+                
+                # 返回响应
+                return {
+                    "success": True,
+                    "response": {
+                        "content": response,
+                        "type": "text",
+                        "metadata": {
+                            "model": "agent-model",
+                            "created": int(time.time()),
+                            "session_id": session_id,
+                            "turn_id": request.turn_id,
+                            "memory_enhanced": bool(context_prefix)
+                        }
+                    },
+                    "memory_context": memory_context if memory_context else None
+                }
+            except Exception as e:
+                logging.error(f"AI-Agent处理失败: {str(e)}")
+                return JSONResponse(
+                    status_code=500,
+                    content={"error": f"AI-Agent处理失败: {str(e)}"}
+                )
+                
         except Exception as e:
-            print(f"AI-Agent处理失败: {str(e)}")
+            logging.error(f"聊天处理失败: {str(e)}")
             return JSONResponse(
                 status_code=500,
-                content={"error": f"AI-Agent处理失败: {str(e)}"}
+                content={"error": f"聊天处理失败: {str(e)}"}
             )
-            
+    
+    # 设置整个请求的超时时间为30秒
+    try:
+        return await asyncio.wait_for(
+            process_chat_request(),
+            timeout=30.0  # 30秒全局超时
+        )
+    except TimeoutError:
+        logging.error("整个请求处理超时")
+        return JSONResponse(
+            status_code=504,  # Gateway Timeout
+            content={
+                "error": "请求处理超时",
+                "message": "服务器响应时间过长，请稍后再试。"
+            }
+        )
     except Exception as e:
-        print(f"聊天处理失败: {str(e)}")
+        logging.error(f"处理请求时发生未预期的错误: {str(e)}")
         return JSONResponse(
             status_code=500,
-            content={"error": f"聊天处理失败: {str(e)}"}
+            content={"error": f"处理请求时发生错误: {str(e)}"}
         )
 
 # 简单的聊天端点，直接返回JSON响应，支持工具调用和多模态消息

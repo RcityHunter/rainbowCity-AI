@@ -7,12 +7,14 @@ from typing import Dict, Any, List, Optional
 import json
 import uuid
 import time
+import logging
 from datetime import datetime
 
 from .context_builder import ContextBuilder
 from .llm_caller import OpenAILLMCaller
 from .tool_invoker import ToolInvoker, get_weather, generate_ai_id, generate_frequency
 from .event_logger import EventLogger
+from app.services.chat_memory_integration import ChatMemoryIntegration
 
 class AIAssistant:
     """主AI助手控制器，整合所有模块"""
@@ -26,6 +28,9 @@ class AIAssistant:
         # 导入聊天服务
         from app.services.chat_service import ChatService
         self.chat_service = ChatService()
+        
+        # 导入聊天记忆集成服务
+        self.chat_memory_integration = ChatMemoryIntegration()
         
         # 注册默认工具
         self._register_default_tools()
@@ -87,7 +92,7 @@ class AIAssistant:
             }
         )
     
-    def process_query(self, user_input: str, session_id: str = None, user_id: str = None, ai_id: str = None, image_data: str = None, file_data: Dict[str, Any] = None) -> Dict[str, Any]:
+    async def process_query(self, user_input: str, session_id: str = None, user_id: str = None, ai_id: str = None, image_data: str = None, file_data: Dict[str, Any] = None) -> Dict[str, Any]:
         """处理用户查询的完整流程
         
         Args:
@@ -98,6 +103,40 @@ class AIAssistant:
             image_data: 图片数据（Base64格式）
             file_data: 文件数据，包含类型、数据和元信息
         """
+        # 导入超时处理模块
+        import asyncio
+        from asyncio import TimeoutError
+        
+        # 设置全局超时时间为25秒，以确保不超过前端的30秒超时限制
+        try:
+            return await asyncio.wait_for(self._process_query_internal(
+                user_input, session_id, user_id, ai_id, image_data, file_data
+            ), timeout=25.0)
+        except TimeoutError:
+            logging.error(f"处理查询超时: session_id={session_id}")
+            return {
+                "response": "抱歉，处理您的请求超时。这可能是由于数据库查询耗时过长。请尝试发送更简短的消息或稍后再试。",
+                "session_id": session_id,
+                "has_tool_calls": False,
+                "tool_results": [],
+                "error": "处理超时"
+            }
+        except Exception as e:
+            logging.error(f"处理查询失败: {str(e)}")
+            return {
+                "response": f"处理您的请求时出错: {str(e)}",
+                "session_id": session_id,
+                "has_tool_calls": False,
+                "tool_results": [],
+                "error": str(e)
+            }
+            
+    async def _process_query_internal(self, user_input: str, session_id: str = None, user_id: str = None, ai_id: str = None, image_data: str = None, file_data: Dict[str, Any] = None) -> Dict[str, Any]:
+        """处理用户查询的内部实现方法"""
+        import time
+        start_time = time.time()
+        logging.info(f"开始处理查询: session_id={session_id}, user_id={user_id}, 输入长度={len(user_input)}字符")
+        
         
         # 生成会话ID和其他标识符（如果未提供）
         session_id = session_id or str(uuid.uuid4())
@@ -119,24 +158,20 @@ class AIAssistant:
         )
         
         # 保存用户输入到数据库（仅对非匿名用户）
-        import asyncio
-        import logging
         
         # 检查是否为匿名用户
         if user_id == "anonymous" or user_id.startswith("anonymous"):
             logging.info(f"匿名用户，跳过数据库保存用户消息: session_id={session_id}")
         else:
             logging.info(f"Saving user message for session {session_id}")
-            # 创建一个异步任务来保存消息
-            asyncio.create_task(
-                self.chat_service.save_message(
-                    session_id=session_id,
-                    user_id=user_id,
-                    role=user_id,  # 用户角色就是用户ID
-                    content=user_input,
-                    content_type="text",
-                    metadata={"file_type": file_type} if file_type else None
-                )
+            # 使用await等待消息保存完成
+            await self.chat_service.save_message(
+                session_id=session_id,
+                user_id=user_id,
+                role=user_id,  # 用户角色就是用户ID
+                content=user_input,
+                content_type="text",
+                metadata={"file_type": file_type} if file_type else None
             )
         
         # 更新或创建会话元数据（仅对非匿名用户）
@@ -144,18 +179,15 @@ class AIAssistant:
             logging.info(f"匿名用户，跳过数据库更新会话元数据: session_id={session_id}")
         else:
             logging.info(f"Updating session metadata for session {session_id}")
-            asyncio.create_task(
-                self.chat_service.update_session(
-                    session_id=session_id,
-                    user_id=user_id,
-                    title=user_input[:30] + ("..." if len(user_input) > 30 else ""),  # 使用用户输入的前30个字符作为标题
-                    last_message=user_input,
-                    last_message_time=datetime.now().isoformat()
-                )
+            await self.chat_service.update_session(
+                session_id=session_id,
+                user_id=user_id,
+                title=user_input[:30] + ("..." if len(user_input) > 30 else ""),  # 使用用户输入的前30个字符作为标题
+                last_message=user_input,
+                last_message_time=datetime.now().isoformat()
             )
         
         # 2. 构建初始上下文
-        import logging
         logging.debug(f"Building initial context with user input and file data")
         
         # 如果有图片数据，优先使用image_data
@@ -170,14 +202,61 @@ class AIAssistant:
             image_data=image_data,
             file_data=file_data
         )
+        
+        # 3. 使用记忆增强上下文（如果不是匿名用户）
+        if user_id != "anonymous" and not user_id.startswith("anonymous"):
+            try:
+                # 导入超时处理模块
+                import asyncio
+                from asyncio import TimeoutError
+                
+                # 获取记忆增强，添加3秒超时
+                logging.info(f"开始获取记忆增强: user_id={user_id}, session_id={session_id}")
+                memory_enhancement = await asyncio.wait_for(
+                    self.chat_memory_integration.enhance_response_with_memories(
+                        user_id=user_id,
+                        user_message=user_input,
+                        current_session_id=session_id
+                    ),
+                    timeout=3.0  # 3秒超时
+                )
+                
+                enhanced_context = memory_enhancement.get("context_enhancement", "")
+                if enhanced_context:
+                    logging.info(f"成功获取记忆增强上下文: {len(enhanced_context)} 字符")
+                    
+                    # 在系统消息中添加记忆增强上下文
+                    system_message = None
+                    for msg in self.context_builder.messages:
+                        if msg.get("role") == "system":
+                            system_message = msg
+                            break
+                            
+                    if system_message:
+                        # 在系统消息中添加记忆增强
+                        original_content = system_message.get("content", "")
+                        system_message["content"] = f"{original_content}\n\n用户相关信息:\n{enhanced_context}"
+                        logging.info("记忆增强已添加到系统消息")
+            except TimeoutError:
+                logging.warning(f"记忆增强超时，继续处理但不使用记忆增强: session_id={session_id}")
+            except Exception as e:
+                logging.error(f"获取记忆增强失败: {str(e)}")
+        else:
+            logging.info(f"匿名用户，跳过记忆增强: user_id={user_id}, session_id={session_id}")
+
+        
         messages = self.context_builder.get_conversation_history()
         
-        # 3. 第一次LLM调用（带工具定义）
+        # 4. 第一次LLM调用（带工具定义）
         tool_definitions = self.tool_invoker.get_tool_definitions()
-        first_response = self.llm_caller.invoke(messages, tools=tool_definitions)
+        logging.info(f"开始第一次LLM调用: session_id={session_id}, 消息数={len(messages)}")
+        llm_start_time = time.time()
+        first_response = await self.llm_caller.invoke(messages, tools=tool_definitions)
+        llm_duration = time.time() - llm_start_time
+        logging.info(f"完成第一次LLM调用: session_id={session_id}, 耗时={llm_duration:.2f}秒")
         self.event_logger.log_llm_call(session_id, user_id, ai_id, messages, first_response, 1)
         
-        # 4. 检查是否有工具调用
+        # 5. 检查是否有工具调用
         if first_response.get("tool_calls"):
             # 处理所有工具调用
             for tool_call in first_response["tool_calls"]:
@@ -185,7 +264,7 @@ class AIAssistant:
                 tool_args = tool_call["arguments"]
                 tool_call_id = tool_call.get("id", f"call_{int(time.time())}")
                 
-                # 5. 执行工具调用
+                # 6. 执行工具调用
                 tool_result = self.tool_invoker.invoke_tool(tool_name, **tool_args)
                 
                 # 记录工具调用
@@ -194,56 +273,59 @@ class AIAssistant:
                     tool_name, tool_args, tool_result
                 )
                 
-                # 6. 更新上下文
+                # 7. 更新上下文
                 self.context_builder.update_context_with_tool_result(tool_name, tool_result, tool_call_id)
             
-            # 7. 第二次LLM调用（不带工具定义）
+            # 8. 第二次LLM调用（不带工具定义）
             updated_messages = self.context_builder.get_conversation_history()
-            final_response = self.llm_caller.invoke(updated_messages)
+            logging.info(f"开始第二次LLM调用: session_id={session_id}, 消息数={len(updated_messages)}")
+            llm_start_time = time.time()
+            final_response = await self.llm_caller.invoke(updated_messages)
+            llm_duration = time.time() - llm_start_time
+            logging.info(f"完成第二次LLM调用: session_id={session_id}, 耗时={llm_duration:.2f}秒")
             self.event_logger.log_llm_call(session_id, user_id, ai_id, updated_messages, final_response, 2)
             
-            # 8. 添加助手回复到上下文
+            # 9. 添加助手回复到上下文
             self.context_builder.add_assistant_message(final_response["content"])
             
-            # 9. 记录最终响应
+            # 10. 记录最终响应
             self.event_logger.log_final_response(
                 session_id, user_id, ai_id,
                 final_response["content"], True
             )
             
             # 保存AI回复到数据库（仅对非匿名用户）
-            import asyncio
-            import logging
             
             # 检查是否为匿名用户
             if user_id == "anonymous" or user_id.startswith("anonymous"):
                 logging.info(f"匿名用户，跳过数据库保存AI回复: session_id={session_id}")
             else:
                 logging.info(f"Saving AI response for session {session_id}")
-                # 创建一个异步任务来保存消息
-                asyncio.create_task(
-                    self.chat_service.save_message(
-                        session_id=session_id,
-                        user_id=user_id,
-                        role=f"{user_id}_aiR",  # AI回复的角色格式
-                        content=final_response["content"],
-                        content_type="text"
-                    )
+                # 使用await等待消息保存完成
+                await self.chat_service.save_message(
+                    session_id=session_id,
+                    user_id=user_id,
+                    role=f"{user_id}_aiR",  # AI回复的角色格式
+                    content=final_response["content"],
+                    content_type="text"
                 )
             
             # 临时禁用会话元数据更新，避免数据库阻塞
             logging.info(f"临时跳过会话更新以避免阻塞: session_id={session_id}")
-            # asyncio.create_task(
-            #     self.chat_service.update_session(
-            #         session_id=session_id,
-            #         user_id=user_id,
-            #         last_message=final_response["content"][:50] + ("..." if len(final_response["content"]) > 50 else ""),
-            #         last_message_time=datetime.now().isoformat()
-            #     )
+            # 如果需要重新启用会话更新，请使用await
+            # await self.chat_service.update_session(
+            #     session_id=session_id,
+            #     user_id=user_id,
+            #     last_message=final_response["content"][:50] + ("..." if len(final_response["content"]) > 50 else ""),
+            #     last_message_time=datetime.now().isoformat()
             # )
             
-            # 10. 保存日志
+            # 11. 保存日志
             log_file = self.event_logger.save_logs(session_id)
+            
+            # 记录总处理时间
+            total_duration = time.time() - start_time
+            logging.info(f"完成查询处理(有工具调用): session_id={session_id}, 总耗时={total_duration:.2f}秒")
             
             # 返回结果
             return {
@@ -265,38 +347,37 @@ class AIAssistant:
             )
             
             # 保存AI回复到数据库（仅对非匿名用户）
-            import asyncio
-            import logging
             
             # 检查是否为匿名用户
             if user_id == "anonymous" or user_id.startswith("anonymous"):
                 logging.info(f"匿名用户，跳过数据库保存AI回复: session_id={session_id}")
             else:
                 logging.info(f"Saving AI response for session {session_id}")
-                # 创建一个异步任务来保存消息
-                asyncio.create_task(
-                    self.chat_service.save_message(
-                        session_id=session_id,
-                        user_id=user_id,
-                        role=f"{user_id}_aiR",  # AI回复的角色格式
-                        content=first_response["content"],
-                        content_type="text"
-                    )
+                # 使用await等待消息保存完成
+                await self.chat_service.save_message(
+                    session_id=session_id,
+                    user_id=user_id,
+                    role=f"{user_id}_aiR",  # AI回复的角色格式
+                    content=first_response["content"],
+                    content_type="text"
                 )
             
             # 临时禁用会话元数据更新，避免数据库阻塞
             logging.info(f"临时跳过会话更新以避免阻塞: session_id={session_id}")
-            # asyncio.create_task(
-            #     self.chat_service.update_session(
-            #         session_id=session_id,
-            #         user_id=user_id,
-            #         last_message=first_response["content"][:50] + ("..." if len(first_response["content"]) > 50 else ""),
-            #         last_message_time=datetime.now().isoformat()
-            #     )
+            # 如果需要重新启用会话更新，请使用await
+            # await self.chat_service.update_session(
+            #     session_id=session_id,
+            #     user_id=user_id,
+            #     last_message=first_response["content"][:50] + ("..." if len(first_response["content"]) > 50 else ""),
+            #     last_message_time=datetime.now().isoformat()
             # )
             
             # 保存日志
             log_file = self.event_logger.save_logs(session_id)
+            
+            # 记录总处理时间
+            total_duration = time.time() - start_time
+            logging.info(f"完成查询处理(无工具调用): session_id={session_id}, 总耗时={total_duration:.2f}秒")
             
             # 返回结果
             return {

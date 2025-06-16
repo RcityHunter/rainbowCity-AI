@@ -347,36 +347,64 @@ class MemoryService:
                     
             # 确定排序方式
             sort_field = 'updated_at'
-            sort_order = -1  # 降序
+            sort_order = 'DESC'  # 降序
             
             if query_params.sort_by == "importance":
                 sort_field = 'importance'
-                sort_order = -1
-                
-            # 执行查询
-            results = await query(
-                'memory',
-                db_query,
-                sort=[(sort_field, sort_order)],
-                limit=query_params.limit,
-                offset=query_params.offset
-            )
+                sort_order = 'DESC'
+            
+            # 添加超时处理，防止数据库查询挂起
+            import asyncio
+            from asyncio import TimeoutError
+            
+            try:
+                # 执行查询，添加5秒超时
+                results = await asyncio.wait_for(
+                    query(
+                        'memory',
+                        db_query,
+                        sort=[(sort_field, sort_order)],
+                        limit=query_params.limit,
+                        offset=query_params.offset
+                    ),
+                    timeout=5.0  # 5秒超时
+                )
+            except TimeoutError:
+                logging.error("数据库查询超时，返回空结果")
+                return []  # 超时时返回空结果
+            except Exception as db_error:
+                logging.error(f"数据库查询错误: {str(db_error)}")
+                return []  # 查询错误时返回空结果
             
             # 如果是相关性排序，需要进一步处理
             if query_params.sort_by == "relevance" and query_params.query:
                 # 这里应该调用向量搜索或其他相关性搜索方法
                 # 简单实现：根据内容匹配度排序
-                results = sorted(
-                    results,
-                    key=lambda x: _calculate_relevance(x, query_params.query),
-                    reverse=True
-                )
+                try:
+                    results = sorted(
+                        results,
+                        key=lambda x: _calculate_relevance(x, query_params.query),
+                        reverse=True
+                    )
+                except Exception as sort_error:
+                    logging.error(f"相关性排序错误: {str(sort_error)}")
+                    # 排序错误时，返回未排序的结果
             
-            # 更新访问时间和计数
+            # 更新访问时间和计数 - 使用异步任务处理，不阻塞主流程
+            async def update_memory_access(memory):
+                try:
+                    memory['last_accessed'] = datetime.now().isoformat()
+                    memory['access_count'] = memory.get('access_count', 0) + 1
+                    await asyncio.wait_for(
+                        update('memory', {'id': memory['id']}, memory),
+                        timeout=2.0  # 2秒超时
+                    )
+                except Exception as update_error:
+                    logging.error(f"更新记忆访问信息失败: {str(update_error)}")
+            
+            # 创建更新任务但不等待它们完成
             for memory in results:
-                memory['last_accessed'] = datetime.now().isoformat()
-                memory['access_count'] = memory.get('access_count', 0) + 1
-                await update('memory', {'id': memory['id']}, memory)
+                asyncio.create_task(update_memory_access(memory))
             
             return results or []
         except Exception as e:

@@ -143,6 +143,23 @@ function AiChat() {
         setMessages(prevMessages => {
           return prevMessages.map(msg => {
             if (msg.id === message.id) {
+              // 检查content是否为字符串类型
+              if (typeof msg.content !== 'string') {
+                // 如果不是字符串，将content转换为字符串或停止打字
+                let stringContent;
+                try {
+                  stringContent = msg.content ? JSON.stringify(msg.content) : '';
+                } catch (e) {
+                  stringContent = '[无法显示的内容类型]';
+                }
+                return { 
+                  ...msg, 
+                  content: stringContent,
+                  displayedContent: stringContent,
+                  isTyping: false // 停止打字效果
+                };
+              }
+              
               // 如果显示内容已经等于完整内容，则停止打字
               if (msg.displayedContent === msg.content) {
                 return { ...msg, isTyping: false };
@@ -580,7 +597,7 @@ function AiChat() {
         }));
       
       // 决定使用哪个聊天端点
-      const chatEndpoint = useAgentChat ? '/api/chat/agent' : '/api/chat';
+      const chatEndpoint = useAgentChat ? '/api/chat-agent' : '/api/chat';
       
       let response;
       
@@ -617,7 +634,7 @@ function AiChat() {
         }
         
         // 使用新的统一文件处理端点
-        response = await fetch('/api/chat/agent/with_file', {
+        response = await fetch('/api/chat-agent/with_file', {
           method: 'POST',
           headers: {
             'Authorization': `Bearer ${localStorage.getItem('token')}` // 添加认证令牌
@@ -632,36 +649,81 @@ function AiChat() {
         const timeoutId = setTimeout(() => controller.abort(), 30000); // 30秒超时
         
         try {
+          // 调试日志：显示请求详情
+          console.log('发送聊天请求到:', chatEndpoint);
+          console.log('请求头:', {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${localStorage.getItem('token')}` 
+          });
+          const requestBody = {
+            session_id: sessionId,
+            turn_id: newTurnId,
+            messages: visibleMessages,
+            user_id: localStorage.getItem('userId') || 'anonymous',
+            ai_id: 'ai_rainbow_city'
+          };
+          console.log('请求体:', JSON.stringify(requestBody));
+          
           response = await fetch(chatEndpoint, {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
               'Authorization': `Bearer ${localStorage.getItem('token')}` // 添加认证令牌
             },
-            body: JSON.stringify({
-              session_id: sessionId,
-              turn_id: newTurnId,
-              messages: visibleMessages,
-              user_id: localStorage.getItem('userId') || 'anonymous',
-              ai_id: 'ai_rainbow_city'
-            }),
+            body: JSON.stringify(requestBody),
             signal: controller.signal
           });
           
           clearTimeout(timeoutId); // 请求成功后清除超时
         } catch (error) {
           if (error.name === 'AbortError') {
-            throw new Error('请求超时，服务器响应时间过长。可能是数据库查询阻塞或服务器负载过高。');
+            throw new Error('请求超时（30秒）：服务器响应时间过长。可能原因：\n1. 数据库查询阻塞\n2. 服务器负载过高\n3. 网络连接问题\n\n请稍后重试，或联系管理员查看服务器日志。');
           }
           throw error;
         }
       }
       
+      // 调试日志：显示响应状态
+      console.log('收到响应状态码:', response.status);
+      console.log('响应头:', [...response.headers.entries()]);
+      
       if (!response.ok) {
-        throw new Error(`服务器错误: ${response.status}`);
+        console.error(`服务器错误状态码: ${response.status}`);
+        const errorText = await response.text();
+        console.error('错误响应内容:', errorText);
+        
+        // 根据状态码提供更具体的错误信息
+        let errorMessage = '';
+        switch(response.status) {
+          case 400:
+            errorMessage = `请求格式错误: ${errorText}`;
+            break;
+          case 401:
+            errorMessage = '认证失败：请重新登录';
+            break;
+          case 403:
+            errorMessage = '权限不足：无法访问此资源';
+            break;
+          case 404:
+            errorMessage = '请求的资源不存在';
+            break;
+          case 408:
+            errorMessage = '服务器请求超时：数据库查询可能耗时过长';
+            break;
+          case 500:
+            errorMessage = `服务器内部错误: ${errorText.includes('database') ? '数据库操作失败' : '服务器处理异常'}`;
+            break;
+          case 503:
+            errorMessage = '服务暂时不可用：服务器可能正在维护或过载';
+            break;
+          default:
+            errorMessage = `服务器错误: ${response.status} - ${errorText}`;
+        }
+        throw new Error(errorMessage);
       }
       
       const data = await response.json();
+      console.log('响应数据:', data);
       
       // 处理响应
       if (data.response) {
@@ -763,9 +825,22 @@ function AiChat() {
       setError(err.message || String(err));
       
       // 添加错误消息
+      let errorContent = err.message || '未知错误';
+      
+      // 增强错误消息的可读性和可操作性
+      if (errorContent.includes('请求超时')) {
+        // 超时错误已经在上面的catch块中格式化过了
+      } else if (errorContent.includes('数据库')) {
+        errorContent = `数据库操作错误: ${errorContent}\n建议: 请稍后重试，或联系管理员检查数据库状态。`;
+      } else if (errorContent.includes('认证失败') || errorContent.includes('权限不足')) {
+        errorContent = `${errorContent}\n建议: 请尝试重新登录。`;
+      } else if (errorContent.includes('服务器内部错误')) {
+        errorContent = `${errorContent}\n建议: 请联系管理员查看服务器日志。`;
+      }
+      
       const errorMessage = createMessage(
         SenderRole.SYSTEM,
-        `错误: ${err.message || '未知错误'}`,
+        `错误: ${errorContent}`,
         MessageType.TEXT,
         { error: true }
       );
@@ -804,7 +879,19 @@ function AiChat() {
   // 渲染消息内容
   const renderMessageContent = (message) => {
     // 准备要显示的内容，如果在打字中则使用displayedContent
-    const contentToShow = message.isTyping ? message.displayedContent : message.content;
+    let contentToShow = message.isTyping ? message.displayedContent : message.content;
+    
+    // 确保contentToShow是字符串类型，防止charAt错误
+    if (contentToShow === null || contentToShow === undefined) {
+      contentToShow = '';
+    } else if (typeof contentToShow !== 'string') {
+      // 如果是对象或其他类型，尝试转换为字符串
+      try {
+        contentToShow = JSON.stringify(contentToShow);
+      } catch (e) {
+        contentToShow = '[无法显示的内容类型]';
+      }
+    }
     
     switch (message.type) {
       case MessageType.MIXED:

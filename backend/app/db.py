@@ -235,9 +235,11 @@ def create(table, data):
     return run_async(_create())
 
 # 同步查询数据
-def query(table, condition=None):
+def query(table, condition=None, sort=None, limit=None, offset=None):
     """查询指定表中的数据"""
     async def _query():
+        import time
+        start_time = time.time()
         db = await get_db()
         if db is None:
             print("Using mock mode for query operation")
@@ -245,6 +247,7 @@ def query(table, condition=None):
         
         # 根据条件执行查询
         query_str = ""
+        params = {}
         try:
             if not condition:
                 # 无条件查询所有记录
@@ -266,30 +269,60 @@ def query(table, condition=None):
                         result = [{'result': [], 'status': 'OK'}]
                 except Exception as e:
                     print(f"Error in direct select: {e}, falling back to query")
-                    # 如果直接选择失败，回退到查询
-                    query_str = f"SELECT * FROM {table} WHERE id = '{record_id}'"
-                    print(f"Fallback query: {query_str}")
-                    result = await db.query(query_str)
+                    # 如果直接选择失败，回退到查询 - 使用参数化查询
+                    query_str = f"SELECT * FROM {table} WHERE id = $id"
+                    params = {"id": record_id}
+                    print(f"Fallback query: {query_str} with params: {params}")
+                    result = await db.query(query_str, params)
             else:
-                # 构建条件查询
-                conditions = " AND ".join([f"{k} = '{v}'" for k, v in condition.items()])
-                query_str = f"SELECT * FROM {table} WHERE {conditions}"
-                print(f"Executing query: {query_str}")
-                result = await db.query(query_str)
+                # 构建条件查询 - 使用参数化查询
+                conditions = []
+                for idx, (k, v) in enumerate(condition.items()):
+                    param_name = f"p{idx}"
+                    conditions.append(f"{k} = ${param_name}")
+                    params[param_name] = v
+                
+                conditions_str = " AND ".join(conditions)
+                query_str = f"SELECT * FROM {table} WHERE {conditions_str}"
+                
+                # 添加排序
+                if sort:
+                    sort_str = ", ".join([f"{field} {order}" for field, order in sort])
+                    query_str += f" ORDER BY {sort_str}"
+                
+                # 添加分页
+                if limit is not None:
+                    query_str += f" LIMIT {limit}"
+                    if offset is not None:
+                        query_str += f" START {offset}"
+                
+                print(f"Executing query: {query_str} with params: {params}")
+                result = await db.query(query_str, params)
+            
+            query_time = time.time() - start_time
+            if query_time > 1.0:  # 记录执行时间超过1秒的查询
+                print(f"SLOW QUERY WARNING: Query took {query_time:.2f} seconds: {query_str} with params: {params}")
             
             print(f"Query result type: {type(result)}")
-            print(f"Query result: {result}")
+            print(f"Query returned in {query_time:.2f} seconds")
         except Exception as e:
+            import traceback
             print(f"Error executing query '{query_str}': {e}")
+            print(f"Query error details: {traceback.format_exc()}")
             raise
         
         # 处理查询结果
         try:
-            if result and result[0] and 'result' in result[0]:
-                return result[0]['result']
+            if result and isinstance(result, list) and len(result) > 0 and 'result' in result[0]:
+                data = result[0]['result']
+                print(f"Query returned {len(data)} results in {query_time:.2f} seconds")
+                return data
+            print(f"Query returned empty result in {query_time:.2f} seconds")
             return []
         except Exception as e:
+            import traceback
             print(f"Error processing query result: {e}")
+            print(f"Error details: {traceback.format_exc()}")
             return []
     
     result_or_coroutine = run_async(_query())
@@ -331,7 +364,6 @@ def update(table, id, data):
             return None
     
     return run_async(_update())
-
 
 # 执行原始SQL查询
 async def execute_raw_query(query_str):

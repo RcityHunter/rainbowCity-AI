@@ -108,21 +108,48 @@ class ChatMemoryIntegration:
             "context_enhancement": ""
         }
         
+        # 导入超时处理模块
+        import asyncio
+        from asyncio import TimeoutError
+        
+        # 1. 检索相关的用户记忆（带超时处理）
         try:
-            # 1. 检索相关的用户记忆
-            relevant_memories = await self.memory_manager.retrieve_relevant_memories(
-                user_id=user_id,
-                query=user_message,
-                limit=5
+            # 添加超时处理，最多等待3秒
+            relevant_memories = await asyncio.wait_for(
+                self.memory_manager.retrieve_relevant_memories(
+                    user_id=user_id,
+                    query=user_message,
+                    limit=5
+                ),
+                timeout=3.0  # 3秒超时
             )
-            
             result["relevant_memories"] = relevant_memories
-            
-            # 2. 获取当前会话的摘要（如果存在）
-            session_summary = await MemoryService.get_session_summary(current_session_id)
+            logging.info(f"成功检索到{len(relevant_memories)}条相关记忆")
+        except TimeoutError:
+            logging.warning(f"检索相关记忆超时，继续处理但不使用记忆增强")
+            relevant_memories = []
+        except Exception as e:
+            logging.error(f"检索相关记忆失败: {str(e)}")
+            relevant_memories = []
+        
+        # 2. 获取当前会话的摘要（带超时处理）
+        try:
+            # 添加超时处理，最多等待2秒
+            session_summary = await asyncio.wait_for(
+                MemoryService.get_session_summary(current_session_id),
+                timeout=2.0  # 2秒超时
+            )
             result["session_summary"] = session_summary
-            
-            # 3. 构建上下文增强信息
+            logging.info(f"成功获取会话摘要: {session_summary is not None}")
+        except TimeoutError:
+            logging.warning(f"获取会话摘要超时，继续处理但不使用会话摘要")
+            session_summary = None
+        except Exception as e:
+            logging.error(f"获取会话摘要失败: {str(e)}")
+            session_summary = None
+        
+        # 3. 构建上下文增强信息
+        try:
             context_enhancement = ""
             
             # 添加会话摘要（如果存在）
@@ -138,8 +165,9 @@ class ChatMemoryIntegration:
                     context_enhancement += f"{i}. {memory_content} ({memory_type})\n"
             
             result["context_enhancement"] = context_enhancement.strip()
-            
-            return result
+            logging.info(f"成功构建上下文增强信息: {len(context_enhancement)} 字符")
         except Exception as e:
-            logging.error(f"使用用户记忆增强响应失败: {str(e)}")
-            return result
+            logging.error(f"构建上下文增强信息失败: {str(e)}")
+            result["context_enhancement"] = ""
+        
+        return result

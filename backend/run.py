@@ -12,5 +12,6 @@ if __name__ == "__main__":
         "app.app:app", 
         host="0.0.0.0", 
         port=5000,  # 与原 Flask 应用使用相同端口
-        reload=True  # 开发模式下启用热重载
+        reload=False,  # 暂时禁用热重载以查看完整日志
+        log_level="debug"  # 增加日志级别
     )

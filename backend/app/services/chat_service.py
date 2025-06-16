@@ -59,10 +59,10 @@ class ChatService:
             import asyncio
             if asyncio.iscoroutine(result):
                 try:
-                    # 添加超时处理
-                    saved_message = await asyncio.wait_for(result, timeout=3.0)
+                    # 添加超时处理 - 增加超时时间从3秒到15秒
+                    saved_message = await asyncio.wait_for(result, timeout=15.0)
                 except asyncio.TimeoutError:
-                    logging.error(f"保存消息超时，返回原始数据: session_id={session_id}")
+                    logging.error(f"保存消息超时(15秒)，返回原始数据: session_id={session_id}, user_id={user_id}, role={role}")
                     # 超时时返回原始数据，不中断流程
                     return message_data
             else:
@@ -112,8 +112,8 @@ class ChatService:
             import asyncio
             from concurrent.futures import TimeoutError as FuturesTimeoutError
             
-            # 设置更短的超时时间
-            TIMEOUT_SECONDS = 3.0
+            # 设置更长的超时时间 (从3秒增加到15秒)
+            TIMEOUT_SECONDS = 15.0
             
             # 直接创建新会话，不进行查询
             # 这样可以避免查询操作可能导致的阻塞
@@ -158,7 +158,7 @@ class ChatService:
                             result = create_result
                         logging.info(f"ChatService.update_session - 创建结果: {result}")
                 except (asyncio.TimeoutError, FuturesTimeoutError) as e:
-                    logging.error(f"ChatService.update_session - 操作超时: {str(e)}")
+                    logging.error(f"ChatService.update_session - 操作超时(15秒): session_id={session_id}, user_id={user_id}, error={str(e)}")
                     # 返回原始数据而不抛出异常，让流程继续
                     return session_data
                 except Exception as e:
@@ -220,20 +220,45 @@ class ChatService:
         Returns:
             会话列表
         """
+        import time
+        start_time = time.time()
+        
         try:
+            if not user_id:
+                logging.error("获取用户会话失败: user_id 为空")
+                return []
+                
+            logging.info(f"正在获取用户会话: user_id={user_id}, limit={limit}, offset={offset}")
+            
             # 查询用户会话
-            query_result = query('chat_sessions', {'user_id': user_id}, sort=[('updated_at', -1)], limit=limit, offset=offset)
+            query_result = query('chat_sessions', {'user_id': user_id}, sort=[('updated_at', 'DESC')], limit=limit, offset=offset)
             
             # 检查结果是否为协程并等待它
             import asyncio
             if asyncio.iscoroutine(query_result):
-                sessions = await query_result
+                try:
+                    # 添加15秒超时
+                    sessions = await asyncio.wait_for(query_result, timeout=15.0)
+                except asyncio.TimeoutError:
+                    logging.error(f"获取用户会话超时(15秒): user_id={user_id}")
+                    return []
             else:
                 sessions = query_result
+            
+            query_time = time.time() - start_time
+            if query_time > 1.0:  # 记录执行时间超过1秒的查询
+                logging.warning(f"慢查询警告: 获取用户会话耗时 {query_time:.2f} 秒: user_id={user_id}")
+                
+            if sessions:
+                logging.info(f"成功获取用户会话: user_id={user_id}, 找到 {len(sessions)} 个会话, 耗时 {query_time:.2f} 秒")
+            else:
+                logging.warning(f"用户没有会话: user_id={user_id}, 耗时 {query_time:.2f} 秒")
                 
             return sessions or []
         except Exception as e:
-            logging.error(f"获取用户会话失败: {str(e)}")
+            import traceback
+            logging.error(f"获取用户会话失败: user_id={user_id}, error={str(e)}")
+            logging.error(f"错误详情: {traceback.format_exc()}")
             return []
     
     @staticmethod

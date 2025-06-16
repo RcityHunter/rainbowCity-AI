@@ -7,14 +7,16 @@ from abc import ABC, abstractmethod
 from typing import List, Dict, Any, Optional
 import os
 import json
-from openai import OpenAI
+import asyncio
+import logging
+from openai import AsyncOpenAI  # Changed to AsyncOpenAI for async support
 
 class LLMCaller(ABC):
     """LLM调用抽象基类"""
     
     @abstractmethod
-    def invoke(self, messages: List[Dict[str, Any]]) -> Dict[str, Any]:
-        """调用LLM"""
+    async def invoke(self, messages: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """调用LLM (异步)"""
         pass
 
 class OpenAILLMCaller(LLMCaller):
@@ -22,10 +24,34 @@ class OpenAILLMCaller(LLMCaller):
     
     def __init__(self, model_name: str = "gpt-4o"):
         self.model_name = model_name
-        self.client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+        self.client = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY"))
         
-    def invoke(self, messages: List[Dict[str, Any]], tools: Optional[List[Dict[str, Any]]] = None, max_tokens: int = 1000) -> Dict[str, Any]:
-        """调用OpenAI模型"""
+    async def invoke(self, messages: List[Dict[str, Any]], tools: Optional[List[Dict[str, Any]]] = None, max_tokens: int = 1000) -> Dict[str, Any]:
+        """调用OpenAI模型 (异步)"""
+        try:
+            # 添加超时处理
+            return await asyncio.wait_for(
+                self._invoke_with_retry(messages, tools, max_tokens),
+                timeout=20.0  # 20秒超时
+            )
+        except asyncio.TimeoutError:
+            logging.error("OpenAI API调用超时")
+            return {
+                "content": "抱歉，AI响应超时。请稍后再试或尝试简化您的问题。",
+                "tool_calls": [],
+                "usage": {}
+            }
+        except Exception as e:
+            # 错误处理
+            logging.error(f"LLM调用出错: {str(e)}")
+            return {
+                "content": f"LLM调用出错: {str(e)}",
+                "tool_calls": [],
+                "usage": {}
+            }
+            
+    async def _invoke_with_retry(self, messages: List[Dict[str, Any]], tools: Optional[List[Dict[str, Any]]] = None, max_tokens: int = 1000) -> Dict[str, Any]:
+        """带重试的OpenAI API调用"""
         try:
             # 准备请求参数
             request_params = {
@@ -58,8 +84,8 @@ class OpenAILLMCaller(LLMCaller):
                 request_params["tools"] = tools
                 request_params["tool_choice"] = "auto"
             
-            # 调用API
-            response = self.client.chat.completions.create(**request_params)
+            # 异步调用API
+            response = await self.client.chat.completions.create(**request_params)
             
             # 解析响应
             message = response.choices[0].message
@@ -90,8 +116,5 @@ class OpenAILLMCaller(LLMCaller):
             
         except Exception as e:
             # 错误处理
-            return {
-                "content": f"LLM调用出错: {str(e)}",
-                "tool_calls": [],
-                "usage": {}
-            }
+            logging.error(f"OpenAI API调用失败: {str(e)}")
+            raise e  # 向上层抛出异常，由外层函数处理
