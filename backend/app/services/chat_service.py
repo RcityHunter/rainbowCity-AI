@@ -109,11 +109,11 @@ class ChatService:
         """
         logging.info(f"ChatService.update_session - 开始更新会话: session_id={session_id}, user_id={user_id}")
         try:
-<<<<<<< HEAD
-            # 查询会话是否存在
-            logging.info(f"ChatService.update_session - 查询会话: session_id={session_id}") # 确保完整记录会话ID
-=======
->>>>>>> 7c9145c0328059e47c7c4107aa7ea494ff0ef2cb
+            # 设置更短的超时时间
+            TIMEOUT_SECONDS = 3.0
+            
+            # 直接创建新会话，不进行查询
+            # 这样可以避免查询操作可能导致的阻塞
             import asyncio
             from concurrent.futures import TimeoutError as FuturesTimeoutError
             
@@ -122,7 +122,7 @@ class ChatService:
             
             # 直接创建新会话，不进行查询
             # 这样可以避免查询操作可能导致的阻塞
->>>>>>> 7c9145c0328059e47c7c4107aa7ea494ff0ef2cb
+
             now = datetime.now().isoformat()
             
             # 直接创建或更新会话，不进行查询

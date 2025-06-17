@@ -10,6 +10,7 @@ import json
 import asyncio
 import logging
 from openai import AsyncOpenAI  # Changed to AsyncOpenAI for async support
+import httpx  # Import httpx for creating AsyncClient
 
 class LLMCaller(ABC):
     """LLM调用抽象基类"""
@@ -24,7 +25,9 @@ class OpenAILLMCaller(LLMCaller):
     
     def __init__(self, model_name: str = "gpt-4o"):
         self.model_name = model_name
-        self.client = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+        # Create an async HTTP client without proxy settings
+        async_http_client = httpx.AsyncClient()
+        self.client = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY"), http_client=async_http_client)
         
     async def invoke(self, messages: List[Dict[str, Any]], tools: Optional[List[Dict[str, Any]]] = None, max_tokens: int = 1000) -> Dict[str, Any]:
         """调用OpenAI模型 (异步)"""

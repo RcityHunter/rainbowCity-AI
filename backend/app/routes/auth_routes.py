@@ -1,7 +1,7 @@
 from fastapi import APIRouter, HTTPException, Depends, Request, Header, status, Security
 from fastapi.responses import JSONResponse
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
-from pydantic import BaseModel, Field, EmailStr, validator
+from pydantic import BaseModel, Field, validator  # Removed EmailStr import temporarily
 from typing import Dict, Any, Optional, List, Union
 from datetime import datetime, timedelta
 import uuid
@@ -40,14 +40,14 @@ ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24 * 7  # 7 天
 
 # 定义请求和响应模型
 class UserRegister(BaseModel):
-    email: EmailStr
+    email: str  # Temporarily using str instead of EmailStr
     username: str
     password: str
     display_name: Optional[str] = None
     invite_code: Optional[str] = None
 
 class UserLogin(BaseModel):
-    email: EmailStr
+    email: str  # Temporarily using str instead of EmailStr
     password: str
 
 class UserProfile(BaseModel):
@@ -73,7 +73,7 @@ class PasswordChange(BaseModel):
     new_password: str
     
 class PasswordReset(BaseModel):
-    email: EmailStr
+    email: str  # Temporarily using str instead of EmailStr
     new_password: str
 
 class InviteCodeVerify(BaseModel):

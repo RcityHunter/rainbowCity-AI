@@ -7,6 +7,7 @@ import os
 import time
 import uuid
 from openai import OpenAI
+import httpx
 from dotenv import load_dotenv
 
 # 导入AI-Agent模块
@@ -22,7 +23,10 @@ load_dotenv()
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
 # 初始OpenAI客户端
-client = OpenAI(api_key=OPENAI_API_KEY)
+# 在新版本的 OpenAI SDK 中，如果需要设置代理，应该使用 http_client 参数
+# 显式创建 httpx 客户端，不使用任何代理设置
+http_client = httpx.Client()
+client = OpenAI(api_key=OPENAI_API_KEY, http_client=http_client)
 
 # 创建AI-Agent实例
 ai_assistant = AIAssistant(model_name="gpt-3.5-turbo")

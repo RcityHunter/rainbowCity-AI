@@ -11,7 +11,7 @@ if __name__ == "__main__":
     uvicorn.run(
         "app.app:app", 
         host="0.0.0.0", 
-        port=5000,  # 与原 Flask 应用使用相同端口
+        port=5001,  # 使用端口 5001 避免与其他服务冲突
         reload=False,  # 暂时禁用热重载以查看完整日志
         log_level="debug"  # 增加日志级别
     )
