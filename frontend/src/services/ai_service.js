@@ -1,7 +1,9 @@
 // API基础URL，根据环境配置
-const API_BASE_URL = process.env.NODE_ENV === 'production' 
-    ? '' // 生产环境使用相对路径
-    : 'http://localhost:5000'; // 开发环境指向FastAPI后端
+// 使用React环境变量或默认值
+const API_BASE_URL = process.env.REACT_APP_API_URL || 
+                    (process.env.NODE_ENV === 'production' 
+                        ? '' // 生产环境使用相对路径
+                        : 'http://localhost:5001'); // 开发环境指向FastAPI后端，使用端口5001
 
 /**
  * 生成彩虹城AI_ID

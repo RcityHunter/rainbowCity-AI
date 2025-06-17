@@ -13,5 +13,6 @@ if __name__ == "__main__":
         host="0.0.0.0", 
         port=5001,  # 使用端口 5001 避免与其他服务冲突
         reload=False,  # 暂时禁用热重载以查看完整日志
-        log_level="debug"  # 增加日志级别
+        log_level="debug",  # 增加日志级别
+        timeout_keep_alive=65,  # 保持连接活跃的超时时间（秒），大于前端的60秒超时
     )

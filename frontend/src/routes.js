@@ -24,6 +24,7 @@ import PromoterApplication from './components/promoter/PromoterApplication';
 // AI聊天组件
 import AiChat from './components/AiChat';
 
+
 // 认证服务
 import { isAuthenticated } from './services/auth_service';
 
@@ -66,6 +67,7 @@ const AppRoutes = () => {
         {/* 公开路由 - 不需要登录 */}
         <Route path="/" element={<Home />} />
         <Route path="/ai-chat" element={<AiChat />} />
+        
         
         {/* 需要登录的路由 */}
         <Route path="/dashboard" element={

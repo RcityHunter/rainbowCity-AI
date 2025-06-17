@@ -4,7 +4,8 @@
  */
 
 // API基础URL
-const API_BASE_URL = 'http://localhost:5000';
+// 使用React环境变量或默认值
+const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://localhost:5001';
 
 /**
  * 获取用户的所有聊天会话

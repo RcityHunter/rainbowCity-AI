@@ -1,7 +1,10 @@
 // frontend-new/src/services/relationship_service.js
 import axios from 'axios';
 
-const API_URL = 'http://localhost:5000/api/relationships';
+// 使用React环境变量或默认值
+const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://localhost:5001/api';
+
+const API_URL = `${API_BASE_URL}/relationships`;
 
 /**
  * 创建新的AI与人类之间的关系

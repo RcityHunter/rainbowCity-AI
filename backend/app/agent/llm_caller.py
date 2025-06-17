@@ -26,8 +26,38 @@ class OpenAILLMCaller(LLMCaller):
     def __init__(self, model_name: str = "gpt-4o"):
         self.model_name = model_name
         # Create an async HTTP client without proxy settings
-        async_http_client = httpx.AsyncClient()
-        self.client = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY"), http_client=async_http_client)
+        self.async_http_client = httpx.AsyncClient()
+        self.client = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY"), http_client=self.async_http_client)
+        self.is_closed = False
+        
+    async def __aenter__(self):
+        return self
+        
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        await self.close()
+        
+    async def close(self):
+        """关闭HTTP客户端连接"""
+        if hasattr(self, 'async_http_client') and not self.is_closed:
+            try:
+                await self.async_http_client.aclose()
+                self.is_closed = True
+                # 显式释放资源
+                self.async_http_client = None
+                if hasattr(self, 'client'):
+                    self.client = None
+                logging.info("OpenAILLMCaller资源已正确关闭")
+            except Exception as e:
+                logging.error(f"关闭OpenAILLMCaller资源时出错: {str(e)}")
+                # 即使出错也标记为已关闭，避免重复尝试关闭
+                self.is_closed = True
+            
+    def __del__(self):
+        """析构函数，确保资源被释放"""
+        # 注意：这不是关闭异步资源的理想方式，但可以作为后备
+        if hasattr(self, 'async_http_client') and not self.is_closed:
+            logging.warning("OpenAILLMCaller实例在没有正确关闭的情况下被销毁")
+            # 我们不能在这里使用await，所以只能记录警告
         
     async def invoke(self, messages: List[Dict[str, Any]], tools: Optional[List[Dict[str, Any]]] = None, max_tokens: int = 1000) -> Dict[str, Any]:
         """调用OpenAI模型 (异步)"""
@@ -55,6 +85,10 @@ class OpenAILLMCaller(LLMCaller):
             
     async def _invoke_with_retry(self, messages: List[Dict[str, Any]], tools: Optional[List[Dict[str, Any]]] = None, max_tokens: int = 1000) -> Dict[str, Any]:
         """带重试的OpenAI API调用"""
+        import time
+        start_time = time.time()
+        logging.info(f"开始OpenAI API调用，消息数量: {len(messages)}")
+        
         try:
             # 准备请求参数
             request_params = {
@@ -81,14 +115,66 @@ class OpenAILLMCaller(LLMCaller):
                 if self.model_name not in ["gpt-4o", "gpt-4-turbo"]:
                     self.model_name = "gpt-4o"  # 自动切换到支持图片的模型
                     request_params["model"] = self.model_name
+                    logging.info(f"检测到图片输入，切换到模型: {self.model_name}")
             
             # 如果提供了工具定义，添加到请求中
             if tools:
+                logging.info(f"添加工具定义到请求，工具数量: {len(tools)}")
                 request_params["tools"] = tools
                 request_params["tool_choice"] = "auto"
             
             # 异步调用API
-            response = await self.client.chat.completions.create(**request_params)
+            # 使用正确的OpenAI API v1.0.0格式
+            # 在v1.0.0中，不存在AsyncCompletions，只有chat.completions
+            logging.info(f"开始调用OpenAI API，模型: {self.model_name}")
+            
+            # 添加超时控制
+            import asyncio
+            try:
+                # 设置15秒超时
+                response = await asyncio.wait_for(
+                    self.client.chat.completions.create(**request_params),
+                    timeout=15.0
+                )
+                logging.info(f"OpenAI API调用成功，耗时: {time.time() - start_time:.2f}秒")
+                
+            except asyncio.TimeoutError:
+                logging.error(f"OpenAI API调用超时 (15秒)")
+                return {
+                    "content": "抱歉，AI响应超时。请稍后再试或尝试更简短的问题。",
+                    "tool_calls": [],
+                    "usage": {}
+                }
+                
+            except Exception as api_error:
+                logging.error(f"OpenAI API调用错误: {str(api_error)}")
+                logging.error(f"错误类型: {type(api_error).__name__}")
+                
+                # 如果错误与'tools'参数有关，则移除该参数重试
+                if 'tools' in request_params:
+                    logging.info("移除tools参数并重试")
+                    request_params_without_tools = request_params.copy()
+                    request_params_without_tools.pop('tools', None)
+                    request_params_without_tools.pop('tool_choice', None)
+                    
+                    try:
+                        response = await asyncio.wait_for(
+                            self.client.chat.completions.create(**request_params_without_tools),
+                            timeout=15.0
+                        )
+                        logging.info(f"不带tools的OpenAI API调用成功，耗时: {time.time() - start_time:.2f}秒")
+                    except asyncio.TimeoutError:
+                        logging.error(f"不带tools的OpenAI API调用也超时 (15秒)")
+                        return {
+                            "content": "抱歉，AI响应超时。请稍后再试或尝试更简短的问题。",
+                            "tool_calls": [],
+                            "usage": {}
+                        }
+                    except Exception as retry_error:
+                        logging.error(f"不带tools的API调用也失败: {str(retry_error)}")
+                        raise retry_error
+                else:
+                    raise api_error
             
             # 解析响应
             message = response.choices[0].message
@@ -120,4 +206,9 @@ class OpenAILLMCaller(LLMCaller):
         except Exception as e:
             # 错误处理
             logging.error(f"OpenAI API调用失败: {str(e)}")
-            raise e  # 向上层抛出异常，由外层函数处理
+            # 提供一个友好的错误响应，而不是让整个请求失败
+            return {
+                "content": f"抱歉，AI响应出现错误: {str(e)}。请稍后再试。",
+                "tool_calls": [],
+                "usage": {}
+            }

@@ -5,6 +5,9 @@ import './AiChat.dark.css';
 import ChatSidebar from './ChatSidebar';
 import MemoryContext from './MemoryContext';
 
+// 获取API基础URL，使用React环境变量或默认值
+const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://localhost:5001/api';
+
 // 消息类型枚举
 const MessageType = {
   TEXT: 'text',
@@ -359,7 +362,7 @@ function AiChat() {
       }
       
       setIsLoadingConversations(true);
-      const API_BASE_URL = process.env.NODE_ENV === 'production' ? '' : 'http://localhost:5000';
+      // 使用全局定义的API_BASE_URL变量
       const token = localStorage.getItem('token');
       
       // 检查token是否存在
@@ -429,7 +432,7 @@ function AiChat() {
       setSessionId(conversationId); // 设置会话ID
       
       // 获取选中对话的消息
-      const API_BASE_URL = process.env.NODE_ENV === 'production' ? '' : 'http://localhost:5000';
+      // 使用全局定义的API_BASE_URL变量
       const token = localStorage.getItem('token');
       
       console.log('获取对话消息:', `${API_BASE_URL}/api/chats/${conversationId}/messages`);
@@ -587,8 +590,19 @@ function AiChat() {
         return prevMessages; // 不改变状态
       });
       
+      // 限制发送给后端的消息历史数量，只发送最近的消息和系统消息
       const visibleMessages = allMessages
         .filter(msg => msg.visible || msg.role === SenderRole.SYSTEM)
+        // 只保留系统消息和最近的4条消息（不包括当前用户消息）
+        .filter((msg, index, array) => {
+          // 始终保留系统消息
+          if (msg.role === SenderRole.SYSTEM) return true;
+          // 计算非系统消息的位置
+          const nonSystemMessages = array.filter(m => m.role !== SenderRole.SYSTEM);
+          const msgIndex = nonSystemMessages.indexOf(msg);
+          // 只保留最近的4条非系统消息
+          return msgIndex >= nonSystemMessages.length - 4;
+        })
         .concat(userMessages)
         .map(msg => ({
           role: msg.role,
@@ -596,8 +610,14 @@ function AiChat() {
           type: msg.type
         }));
       
+      console.log('发送给后端的消息数量:', visibleMessages.length);
+      
       // 决定使用哪个聊天端点
-      const chatEndpoint = useAgentChat ? '/api/chat-agent' : '/api/chat';
+      // 使用完整的API URL
+      const chatEndpoint = `${API_BASE_URL}${useAgentChat ? '/chat-agent' : '/chat'}`;
+      console.log('使用API端点:', chatEndpoint);
+      console.log('API_BASE_URL:', API_BASE_URL);
+      console.log('环境变量REACT_APP_API_URL:', process.env.REACT_APP_API_URL);
       
       let response;
       
@@ -633,12 +653,19 @@ function AiChat() {
           }
         }
         
-        // 使用新的统一文件处理端点
-        response = await fetch('/api/chat-agent/with_file', {
+        // 获取token
+        const token = localStorage.getItem('token');
+        
+        // 准备请求头
+        const headers = {};
+        if (token) {
+          headers['Authorization'] = `Bearer ${token}`;
+        }
+        
+        // 使用新的统一文件处理端点，带完整API URL
+        response = await fetch(`${API_BASE_URL}/chat-agent/with_file`, {
           method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${localStorage.getItem('token')}` // 添加认证令牌
-          },
+          headers: headers,
           body: formData
         });
       } 
@@ -646,30 +673,49 @@ function AiChat() {
       else {
         // 创建AbortController用于超时处理
         const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 30000); // 30秒超时
+        // 增加超时时间到60秒，给后端更多处理时间
+        const timeoutId = setTimeout(() => {
+          console.log('请求超时，正在中止...');
+          controller.abort();
+        }, 60000); // 60秒超时
         
         try {
+          // 获取用户信息
+          const token = localStorage.getItem('token');
+          const userId = localStorage.getItem('userId') || 'anonymous';
+          
           // 调试日志：显示请求详情
           console.log('发送聊天请求到:', chatEndpoint);
+          console.log('用户登录状态:', token ? '已登录' : '未登录');
           console.log('请求头:', {
             'Content-Type': 'application/json',
-            'Authorization': `Bearer ${localStorage.getItem('token')}` 
+            'Authorization': token ? `Bearer ${token}` : ''
           });
+          
           const requestBody = {
             session_id: sessionId,
             turn_id: newTurnId,
             messages: visibleMessages,
-            user_id: localStorage.getItem('userId') || 'anonymous',
+            user_id: userId,
             ai_id: 'ai_rainbow_city'
           };
           console.log('请求体:', JSON.stringify(requestBody));
+          console.log('请求体大小:', JSON.stringify(requestBody).length, '字节');
+          console.log('消息数量:', visibleMessages.length);
+          
+          // 准备请求头
+          const headers = {
+            'Content-Type': 'application/json'
+          };
+          
+          // 只有当token存在时才添加Authorization头
+          if (token) {
+            headers['Authorization'] = `Bearer ${token}`;
+          }
           
           response = await fetch(chatEndpoint, {
             method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              'Authorization': `Bearer ${localStorage.getItem('token')}` // 添加认证令牌
-            },
+            headers: headers,
             body: JSON.stringify(requestBody),
             signal: controller.signal
           });
@@ -686,6 +732,11 @@ function AiChat() {
       // 调试日志：显示响应状态
       console.log('收到响应状态码:', response.status);
       console.log('响应头:', [...response.headers.entries()]);
+      
+      // 打印响应类型信息
+      console.log('响应类型:', response.type);
+      console.log('响应URL:', response.url);
+      console.log('响应重定向状态:', response.redirected);
       
       if (!response.ok) {
         console.error(`服务器错误状态码: ${response.status}`);

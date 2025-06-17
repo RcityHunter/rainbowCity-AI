@@ -1,10 +1,9 @@
 import asyncio
 import os
 import time
-import threading
-from flask import g, current_app
 import surrealdb
 from dotenv import load_dotenv
+import logging
 
 # 加载环境变量
 load_dotenv()
@@ -18,12 +17,12 @@ SURREAL_DB = os.getenv('SURREAL_DB', 'test')
 
 # 全局数据库连接
 _db = None
-_db_lock = threading.Lock()
+_db_lock = asyncio.Lock()
 _connection_attempts = 0
 _max_connection_attempts = 3
 _connection_retry_delay = 2  # 秒
 _db_pool = {}
-_db_pool_lock = threading.Lock()
+_db_pool_lock = asyncio.Lock()
 
 # 检查连接是否可用
 async def is_connection_alive():
@@ -44,15 +43,16 @@ async def init_db_connection():
     """初始化数据库连接"""
     global _db, _connection_attempts
     
-    # 使用锁确保只有一个线程在初始化连接
-    with _db_lock:
+    # 使用异步锁确保只有一个协程在初始化连接
+    async with _db_lock:
         # 如果连接已存在且正常，直接返回
         if _db is not None and await is_connection_alive():
+            logging.info("DB连接已存在且正常，直接返回")
             return _db
         
         # 检查连接尝试次数
         if _connection_attempts >= _max_connection_attempts:
-            print(f"Maximum connection attempts ({_max_connection_attempts}) reached. Using mock mode.")
+            logging.error(f"Maximum connection attempts ({_max_connection_attempts}) reached. Using mock mode.")
             return None
         
         # 尝试连接
@@ -61,27 +61,29 @@ async def init_db_connection():
             # 如果已有连接，先关闭
             if _db is not None:
                 try:
+                    logging.info("关闭旧的数据库连接")
                     await _db.close()
-                except Exception:
-                    pass
+                except Exception as e:
+                    logging.error(f"关闭旧连接出错: {str(e)}")
             
             # 创建新连接
+            logging.info(f"尝试创建新的数据库连接: {SURREAL_URL}")
             _db = surrealdb.Surreal()
             await _db.connect(SURREAL_URL)
             await _db.signin({"user": SURREAL_USER, "pass": SURREAL_PASS})
             await _db.use(SURREAL_NS, SURREAL_DB)
-            print(f"Connected to SurrealDB at {SURREAL_URL} (attempt {_connection_attempts})")
+            logging.info(f"Connected to SurrealDB at {SURREAL_URL} (attempt {_connection_attempts})")
             
             # 重置连接尝试计数
             _connection_attempts = 0
             return _db
         except Exception as e:
-            print(f"Error connecting to SurrealDB (attempt {_connection_attempts}): {e}")
+            logging.error(f"Error connecting to SurrealDB (attempt {_connection_attempts}): {e}")
             
             # 如果还有尝试次数，等待一段时间后重试
             if _connection_attempts < _max_connection_attempts:
-                print(f"Retrying in {_connection_retry_delay} seconds...")
-                time.sleep(_connection_retry_delay)
+                logging.info(f"Retrying in {_connection_retry_delay} seconds...")
+                await asyncio.sleep(_connection_retry_delay)  # 使用异步睡眠而不是阻塞睡眠
                 return await init_db_connection()
             
             return None
@@ -91,43 +93,43 @@ async def get_db():
     """获取数据库连接"""
     global _db_pool
     
-    # 获取当前线程 ID
-    thread_id = threading.get_ident()
+    # 获取当前任务 ID作为唯一标识符
+    task_id = id(asyncio.current_task())
     
-    # 使用锁确保线程安全
-    with _db_pool_lock:
-        # 检查这个线程是否已有连接
-        if thread_id in _db_pool and _db_pool[thread_id] is not None:
+    # 使用异步锁确保并发安全
+    async with _db_pool_lock:
+        # 检查这个任务是否已有连接
+        if task_id in _db_pool and _db_pool[task_id] is not None:
             # 检查连接是否正常
             try:
-                await _db_pool[thread_id].query('INFO FOR DB')
-                return _db_pool[thread_id]
-            except Exception:
+                await _db_pool[task_id].query('INFO FOR DB')
+                logging.info(f"使用现有连接: task_id={task_id}")
+                return _db_pool[task_id]
+            except Exception as e:
                 # 如果连接出错，删除并创建新连接
+                logging.error(f"现有连接失效: task_id={task_id}, error={str(e)}")
                 try:
-                    await _db_pool[thread_id].close()
-                except Exception:
-                    pass
-                del _db_pool[thread_id]
+                    await _db_pool[task_id].close()
+                except Exception as e:
+                    logging.error(f"关闭失效连接出错: {str(e)}")
+                del _db_pool[task_id]
         
         # 创建新连接
         try:
             # 创建新连接
+            logging.info(f"为任务 {task_id} 创建新连接")
             db = surrealdb.Surreal()
             await db.connect(SURREAL_URL)
             await db.signin({"user": SURREAL_USER, "pass": SURREAL_PASS})
             await db.use(SURREAL_NS, SURREAL_DB)
-            print(f"Created new connection for thread {thread_id}")
+            logging.info(f"Created new connection for task {task_id}")
             
             # 将连接存入连接池
-            _db_pool[thread_id] = db
+            _db_pool[task_id] = db
             return db
         except Exception as e:
-            print(f"Error creating connection for thread {thread_id}: {e}")
-            # 如果创建失败，尝试使用全局连接
-            if _db is not None and await is_connection_alive():
-                return _db
-            return await init_db_connection()
+            logging.error(f"Error creating database connection: {e}")
+            return None
 
 # 异步关闭数据库连接
 async def close_db():
@@ -137,26 +139,33 @@ async def close_db():
     # 关闭全局连接
     if _db is not None:
         try:
-            print("Closing global SurrealDB connection...")
             await _db.close()
-            _db = None
-            print("Global SurrealDB connection closed")
+            logging.info("Closed global database connection")
         except Exception as e:
-            print(f"Error closing global SurrealDB connection: {e}")
+            logging.error(f"Error closing global database connection: {e}")
+        finally:
+            _db = None
     
     # 关闭连接池中的所有连接
-    with _db_pool_lock:
-        for thread_id, conn in list(_db_pool.items()):
-            if conn is not None:
-                try:
-                    print(f"Closing SurrealDB connection for thread {thread_id}...")
-                    await conn.close()
-                    print(f"SurrealDB connection for thread {thread_id} closed")
-                except Exception as e:
-                    print(f"Error closing SurrealDB connection for thread {thread_id}: {e}")
-                finally:
-                    _db_pool[thread_id] = None
-        print("Connection pool cleared")
+    async with _db_pool_lock:
+        for task_id, db in list(_db_pool.items()):
+            try:
+                await db.close()
+                logging.info(f"Closed database connection for task {task_id}")
+            except Exception as e:
+                logging.error(f"Error closing database connection for task {task_id}: {e}")
+            finally:
+                del _db_pool[task_id]
+        
+        # 清空连接池
+        _db_pool.clear()
+    
+    logging.info("All database connections closed")
+    
+    # 强制进行垃圾回收
+    import gc
+    gc.collect()
+    logging.info("Garbage collection performed after closing DB connections")
 
 # 同步包装器，将异步操作转换为同步操作
 def run_async(async_func):

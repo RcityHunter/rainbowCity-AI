@@ -1,8 +1,11 @@
 import axios from 'axios';
 
 // 使用绝对路径，直接指向后端服务器
-// 更新为 FastAPI 的 API 前缀
-const API_URL = 'http://localhost:5000/api/auth/';
+// 更新为 FastAPI 的 API 前缀，使用端口5001
+
+// 从环境变量获取API基础URL
+const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://localhost:5001/api';
+const API_URL = `${API_BASE_URL}/auth/`;
 
 // 设置请求拦截器，在每个请求中添加认证令牌
 axios.interceptors.request.use(

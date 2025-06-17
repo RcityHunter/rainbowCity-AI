@@ -164,12 +164,20 @@ async def chat(request: ChatRequest):
         if "频率" in last_user_message or "编号" in last_user_message:
             should_recommend_tools = True
             # 调用OpenAI API获取响应
-            response = client.chat.completions.create(
-                model="gpt-3.5-turbo",
-                messages=openai_messages,
-                tools=AVAILABLE_TOOLS,
-                tool_choice="auto"
-            )
+            try:
+                response = client.chat.completions.create(
+                    model="gpt-3.5-turbo",
+                    messages=openai_messages,
+                    tools=AVAILABLE_TOOLS,
+                    tool_choice="auto"
+                )
+            except Exception as api_error:
+                # 如果出现错误，尝试不使用tools参数
+                print(f"API调用出错，尝试不使用tools参数: {str(api_error)}")
+                response = client.chat.completions.create(
+                    model="gpt-3.5-turbo",
+                    messages=openai_messages
+                )
             
             # 处理响应
             ai_message = response.choices[0].message

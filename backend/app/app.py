@@ -1,8 +1,12 @@
 import logging
+import time
+import asyncio
 from fastapi import FastAPI, Request, Response, APIRouter
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from starlette.middleware.base import BaseHTTPMiddleware
 import os
+import gc
 from dotenv import load_dotenv
 from .db import init_db_connection, close_db
 
@@ -31,6 +35,38 @@ async def startup_db_client():
 async def shutdown_db_client():
     await close_db()
     print("Database connection closed on shutdown")
+
+# 自定义中间件类来处理资源清理和请求超时
+class ResourceCleanupMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        request_id = f"{int(time.time())}-{id(request)}"
+        logging.info(f"[资源中间件-{request_id}] 请求开始处理: {request.url.path}")
+        start_time = time.time()
+        
+        try:
+            # 调用下一个中间件或路由处理函数
+            response = await call_next(request)
+            
+            # 计算处理时间
+            process_time = time.time() - start_time
+            logging.info(f"[资源中间件-{request_id}] 请求完成: {request.url.path}, 耗时: {process_time:.2f}秒")
+            
+            # 强制进行垃圾回收
+            gc.collect()
+            logging.info(f"[资源中间件-{request_id}] 强制垃圾回收完成")
+            
+            return response
+        except Exception as e:
+            logging.error(f"[资源中间件-{request_id}] 请求处理异常: {str(e)}")
+            # 强制进行垃圾回收
+            gc.collect()
+            return JSONResponse(
+                status_code=500,
+                content={"detail": "Internal Server Error", "error": str(e)}
+            )
+
+# 添加资源清理中间件
+app.add_middleware(ResourceCleanupMiddleware)
 
 # 配置 CORS
 app.add_middleware(

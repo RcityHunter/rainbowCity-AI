@@ -35,6 +35,43 @@ class AIAssistant:
         # 注册默认工具
         self._register_default_tools()
         
+    async def close(self):
+        """关闭所有资源"""
+        try:
+            # 关闭LLM调用器
+            if hasattr(self, 'llm_caller'):
+                await self.llm_caller.close()
+                self.llm_caller = None
+            
+            # 关闭其他可能持有资源的对象
+            if hasattr(self, 'chat_service'):
+                self.chat_service = None
+                
+            if hasattr(self, 'chat_memory_integration'):
+                self.chat_memory_integration = None
+                
+            if hasattr(self, 'tool_invoker'):
+                self.tool_invoker = None
+                
+            if hasattr(self, 'context_builder'):
+                self.context_builder = None
+                
+            if hasattr(self, 'event_logger'):
+                self.event_logger = None
+                
+            logging.info("AIAssistant实例已关闭所有资源")
+            
+        except Exception as e:
+            logging.error(f"关闭AIAssistant资源时出错: {str(e)}")
+            # 继续抛出异常，让调用者知道出了问题
+            raise
+            
+    async def __aenter__(self):
+        return self
+        
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        await self.close()
+        
     def _register_default_tools(self):
         """注册默认工具"""
         # 天气工具
@@ -137,8 +174,7 @@ class AIAssistant:
         start_time = time.time()
         logging.info(f"开始处理查询: session_id={session_id}, user_id={user_id}, 输入长度={len(user_input)}字符")
         
-        
-        # 生成会话ID和其他标识符（如果未提供）
+        # 生成会话 ID 和其他标识符（如果未提供）
         session_id = session_id or str(uuid.uuid4())
         user_id = user_id or "user_" + str(uuid.uuid4())[:8]
         ai_id = ai_id or "ai_" + str(uuid.uuid4())[:8]
@@ -147,6 +183,9 @@ class AIAssistant:
         self.context_builder.session_id = session_id
         self.context_builder.user_id = user_id
         self.context_builder.ai_id = ai_id
+        
+        # 初始化结果变量
+        result = None
         
         # 1. 记录用户输入和文件信息
         file_type = file_data.get('type') if file_data else None
