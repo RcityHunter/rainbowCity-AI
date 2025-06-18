@@ -3,6 +3,7 @@ import time
 import asyncio
 from fastapi import FastAPI, Request, Response, APIRouter
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 import os
@@ -24,6 +25,22 @@ app = FastAPI(
     description="彩虹城 AI 共生社区后端 API",
     version="1.0.0"
 )
+
+# 添加全局异常处理器
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request, exc):
+    error_details = []
+    for error in exc.errors():
+        error_details.append({
+            'loc': error.get('loc', []),
+            'msg': error.get('msg', ''),
+            'type': error.get('type', '')
+        })
+    logging.error(f"Validation error: {error_details}")
+    return JSONResponse(
+        status_code=422,
+        content={"detail": error_details}
+    )
 
 # 使用FastAPI的生命周期事件来初始化和关闭数据库连接
 @app.on_event("startup")
@@ -71,7 +88,7 @@ app.add_middleware(ResourceCleanupMiddleware)
 # 配置 CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # 允许所有来源，生产环境中应该限制
+    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],  # 指定允许的前端源
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

@@ -60,7 +60,7 @@ class Message(BaseModel):
     chat_id: str
     role: str
     content: str
-    timestamp: Optional[str] = None  # 修改为可选字段
+    timestamp: str
     token_count: Optional[int] = None
     metadata: Optional[Dict[str, Any]] = None
 
@@ -279,10 +279,9 @@ async def create_chat(
                     if 'metadata' in msg:
                         message_data['metadata'] = msg.get('metadata', {})
                         
-                    # 创建消息 - 使用message表而不chat_messages表
+                    # 创建消息
                     try:
-                        await create('message', message_data)
-                        logging.info(f"Message created successfully for chat: {chat_id}")
+                        await create('chat_messages', message_data)
                     except Exception as msg_err:
                         logging.error(f"Failed to create message: {str(msg_err)}")
                         # 继续处理下一条消息，不中断整个批处理
@@ -390,16 +389,8 @@ async def get_chat(
     user_id = current_user.get('id')
     
     try:
-        # 查询聊天会话 - 检查ID格式
-        chat_id_for_query = chat_id
-        # 如果ID已经包含chat:前缀，则直接使用，否则添加前缀
-        if chat_id.startswith("chat:"):
-            # 从URL中获取的ID可能已经包含前缀，需要去除
-            chat_id_for_query = chat_id
-        else:
-            chat_id_for_query = f"chat:{chat_id}"
-        logging.info(f"查询聊天会话，ID: {chat_id_for_query}")
-        chats = await query("chat", {"id": chat_id_for_query})
+        # 查询聊天会话
+        chats = await query('chat', {'id': f'chat:{chat_id}'})
         
         if not chats or len(chats) == 0:
             raise HTTPException(status_code=404, detail="聊天会话不存在")
@@ -431,16 +422,8 @@ async def update_chat(
     user_id = current_user.get('id')
     
     try:
-        # 查询聊天会话 - 检查ID格式
-        chat_id_for_query = chat_id
-        # 如果ID已经包含chat:前缀，则直接使用，否则添加前缀
-        if chat_id.startswith("chat:"):
-            # 从URL中获取的ID可能已经包含前缀，需要去除
-            chat_id_for_query = chat_id
-        else:
-            chat_id_for_query = f"chat:{chat_id}"
-        logging.info(f"查询聊天会话，ID: {chat_id_for_query}")
-        chats = await query("chat", {"id": chat_id_for_query})
+        # 查询聊天会话
+        chats = await query('chat', {'id': f'chat:{chat_id}'})
         
         if not chats or len(chats) == 0:
             raise HTTPException(status_code=404, detail="聊天会话不存在")
@@ -492,16 +475,8 @@ async def delete_chat(
     user_id = current_user.get('id')
     
     try:
-        # 查询聊天会话 - 检查ID格式
-        chat_id_for_query = chat_id
-        # 如果ID已经包含chat:前缀，则直接使用，否则添加前缀
-        if chat_id.startswith("chat:"):
-            # 从URL中获取的ID可能已经包含前缀，需要去除
-            chat_id_for_query = chat_id
-        else:
-            chat_id_for_query = f"chat:{chat_id}"
-        logging.info(f"查询聊天会话，ID: {chat_id_for_query}")
-        chats = await query("chat", {"id": chat_id_for_query})
+        # 查询聊天会话
+        chats = await query('chat', {'id': f'chat:{chat_id}'})
         
         if not chats or len(chats) == 0:
             raise HTTPException(status_code=404, detail="聊天会话不存在")
@@ -551,16 +526,8 @@ async def get_chat_messages(
     user_id = current_user.get('id')
     
     try:
-        # 查询聊天会话 - 检查ID格式
-        chat_id_for_query = chat_id
-        # 如果ID已经包含chat:前缀，则直接使用，否则添加前缀
-        if chat_id.startswith("chat:"):
-            # 从URL中获取的ID可能已经包含前缀，需要去除
-            chat_id_for_query = chat_id
-        else:
-            chat_id_for_query = f"chat:{chat_id}"
-        logging.info(f"查询聊天会话，ID: {chat_id_for_query}")
-        chats = await query("chat", {"id": chat_id_for_query})
+        # 查询聊天会话
+        chats = await query('chat', {'id': f'chat:{chat_id}'})
         
         if not chats or len(chats) == 0:
             raise HTTPException(status_code=404, detail="聊天会话不存在")
@@ -573,70 +540,24 @@ async def get_chat_messages(
         
         # 查询消息 - 使用辅助函数确保正确的ID格式
         chat_id_with_prefix = ensure_chat_id_format(chat_id)
-        logging.info(f"查询消息，chat_id: {chat_id_with_prefix}")
-        
-        # 执行直接ID查询，检查是否有消息
-        try:
-            direct_query_result = await execute_raw_query(f"SELECT * FROM message WHERE chat_id = '{chat_id_with_prefix}'")
-            logging.info(f"直接查询结果: {direct_query_result}")
-            logging.info(f"直接查询结果类型: {type(direct_query_result)}")
-        except Exception as e:
-            logging.error(f"直接查询出错: {str(e)}")
-            direct_query_result = None
-        
-        # 使用标准查询方法
         all_messages = await query('message', {'chat_id': chat_id_with_prefix})
-        logging.info(f"查询消息结果: {all_messages}")
-        logging.info(f"查询消息结果类型: {type(all_messages)}")
         
         total = len(all_messages) if all_messages else 0
-        logging.info(f"消息总数: {total}")
-        
-        # 如果没有消息，尝试查询所有消息表中的数据
-        if total == 0:
-            try:
-                all_table_messages = await execute_raw_query("SELECT * FROM message LIMIT 10")
-                logging.info(f"消息表中的数据: {all_table_messages}")
-            except Exception as e:
-                logging.error(f"查询所有消息出错: {str(e)}")
-        
         
         # 计算分页
         offset = (page - 1) * per_page
         
         # 按时间戳排序
         if all_messages:
-            # 确保所有消息都有timestamp字段，如果没有则使用当前时间
-            for msg in all_messages:
-                if 'timestamp' not in msg or not msg['timestamp']:
-                    msg['timestamp'] = datetime.now().isoformat()
-                    logging.info(f"添加缺失的timestamp字段: {msg['id'] if 'id' in msg else 'unknown'}")
-            
             all_messages.sort(key=lambda x: x.get('timestamp', ''))
             
             # 分页获取消息
             messages = all_messages[offset:offset + per_page] if offset < total else []
-            
-            # 确保所有返回的消息都有必需的字段
-            for msg in messages:
-                # 确保所有必需字段都存在
-                if 'id' not in msg:
-                    msg['id'] = f"msg_{int(time.time())}_{id(msg)}"
-                if 'role' not in msg:
-                    msg['role'] = 'unknown'
-                if 'content' not in msg:
-                    msg['content'] = ''
         else:
             messages = []
         
         # 计算是否有更多消息
         has_more = (offset + len(messages)) < total
-        
-        logging.info(f"返回消息数量: {len(messages)}")
-        if messages:
-            logging.info(f"第一条消息示例: {messages[0]}")
-        else:
-            logging.info("没有消息返回")
         
         return {
             'messages': messages,
@@ -666,16 +587,8 @@ async def add_chat_message(
         if message_data.role not in ['user', 'assistant', 'system']:
             raise HTTPException(status_code=400, detail="无效的消息角色")
         
-        # 查询聊天会话 - 检查ID格式
-        chat_id_for_query = chat_id
-        # 如果ID已经包含chat:前缀，则直接使用，否则添加前缀
-        if chat_id.startswith("chat:"):
-            # 从URL中获取的ID可能已经包含前缀，需要去除
-            chat_id_for_query = chat_id
-        else:
-            chat_id_for_query = f"chat:{chat_id}"
-        logging.info(f"查询聊天会话，ID: {chat_id_for_query}")
-        chats = await query("chat", {"id": chat_id_for_query})
+        # 查询聊天会话
+        chats = await query('chat', {'id': f'chat:{chat_id}'})
         
         if not chats or len(chats) == 0:
             raise HTTPException(status_code=404, detail="聊天会话不存在")
@@ -688,7 +601,7 @@ async def add_chat_message(
         
         # 准备消息数据
         new_message = {
-            'chat_id': chat_id_for_query,  # 使用已经格式化的chat_id
+            'chat_id': f'chat:{chat_id}',
             'role': message_data.role,
             'content': message_data.content,
             'timestamp': message_data.timestamp or datetime.now().isoformat()
@@ -701,40 +614,23 @@ async def add_chat_message(
         if message_data.metadata is not None:
             new_message['metadata'] = message_data.metadata
         
-        # 创建消息 - 使用异步版本的create函数
-        try:
-            logging.info(f"尝试创建消息: {new_message}")
-            result = await create('message', new_message)  # 使用await关键字
-            logging.info(f"消息创建结果: {result}")
+        # 创建消息
+        result = create('message', new_message)
+        
+        if result and len(result) > 0:
+            message_id = result[0].get('id')
             
-            if result and (isinstance(result, dict) or (isinstance(result, list) and len(result) > 0)):
-                # 处理字典结果
-                if isinstance(result, dict):
-                    message_id = result.get('id')
-                # 处理列表结果
-                else:
-                    message_id = result[0].get('id')
-                
-                logging.info(f"消息创建成功，ID: {message_id}")
-                
-                # 更新聊天会话的最后消息时间和预览
-                preview = message_data.content
-                if len(preview) > 100:
-                    preview = preview[:97] + '...'
-                
-                update_data = {
-                    'last_message_at': new_message['timestamp'],
-                    'last_message_preview': preview
-                }
-                
-                # 使用异步版本的update函数
-                await update('chat', chat_id_for_query, update_data)  # 使用正确格式的chat_id
-            else:
-                logging.error(f"消息创建结果为空或无效: {result}")
-                raise HTTPException(status_code=500, detail="添加消息失败，服务器返回空结果")
-        except Exception as e:
-            logging.error(f"创建消息时出错: {str(e)}")
-            raise HTTPException(status_code=500, detail=f"添加消息失败: {str(e)}")
+            # 更新聊天会话的最后消息时间和预览
+            preview = message_data.content
+            if len(preview) > 100:
+                preview = preview[:97] + '...'
+            
+            update_data = {
+                'last_message_at': new_message['timestamp'],
+                'last_message_preview': preview
+            }
+            
+            update('chat', chat_id, update_data)
             
             return {
                 'message': 'Message added successfully',

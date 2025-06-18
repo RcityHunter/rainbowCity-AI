@@ -159,12 +159,12 @@ async def register(user: UserRegister):
             )
             
         # 检查邮箱是否已存在
-        existing_users = query('users', {'email': user.email})
+        existing_users = await query('users', {'email': user.email})
         if existing_users and len(existing_users) > 0:
             raise HTTPException(status_code=400, detail="Email already registered")
             
         # 检查用户名是否已存在
-        existing_usernames = query('users', {'username': user.username})
+        existing_usernames = await query('users', {'username': user.username})
         if existing_usernames and len(existing_usernames) > 0:
             raise HTTPException(status_code=400, detail="Username already taken")
             
@@ -172,7 +172,7 @@ async def register(user: UserRegister):
         invite_benefits = {}
         if user.invite_code:
             # 查找邀请码
-            invites = query('invite_code', {'code': user.invite_code})
+            invites = await query('invite_code', {'code': user.invite_code})
             
             if not invites or len(invites) == 0:
                 raise HTTPException(status_code=400, detail="Invalid invite code")
@@ -190,7 +190,7 @@ async def register(user: UserRegister):
             invite_benefits = invite.get('benefits', {})
             
             # 更新邀请码使用次数
-            db_update('invite_code', invite.get('id'), {'used_count': invite.get('used_count', 0) + 1})
+            await db_update('invite_code', invite.get('id'), {'used_count': invite.get('used_count', 0) + 1})
             
         # 使用新的密码哈希函数
         password_hash = get_password_hash(user.password)
@@ -216,7 +216,7 @@ async def register(user: UserRegister):
         }
         
         # 创建用户
-        result = create('users', user_data)
+        result = await create('users', user_data)
         
         if not result:
             raise HTTPException(status_code=500, detail="Failed to create user")

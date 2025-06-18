@@ -58,18 +58,19 @@ async def get_user(user_id: str) -> Optional[User]:
     
     try:
         # 尝试从数据库获取用户
-        # 注意：这里假设user_id格式为'users:uuid'，需要提取uuid部分
+        # 注意：这里假讼user_id格式为'users:uuid'，需要提取uuid部分
         if ':' in user_id:
             _, uuid = user_id.split(':', 1)
         else:
             uuid = user_id
-            
-        query = f"SELECT * FROM users WHERE id = '{uuid}' LIMIT 1"
-        result = await db.fetch_one(query)
         
-        if result:
-            # 创建用户对象
-            user = User(**dict(result))
+        # 使用query函数代替db.fetch_one
+        from app.db import query
+        users = await query('users', {'id': uuid})
+        
+        if users and len(users) > 0:
+            # 获取第一个匹配的用户
+            user = users[0]
             # 更新缓存
             user_cache[user_id] = {
                 "user": user,
@@ -89,7 +90,7 @@ async def get_user(user_id: str) -> Optional[User]:
                     "created_at": datetime.utcnow(),
                     "is_activated": True
                 }
-                user = User(**temp_user)
+                user = temp_user
                 user_cache[user_id] = {
                     "user": user,
                     "expires_at": datetime.now() + timedelta(seconds=CACHE_TIMEOUT)
@@ -108,15 +109,25 @@ async def authenticate_user(username: str, password: str) -> Optional[User]:
     验证用户名和密码
     """
     try:
-        query = f"SELECT * FROM users WHERE username = '{username}' OR email = '{username}' LIMIT 1"
-        result = await db.fetch_one(query)
+        # 使用query函数代替db.fetch_one
+        from app.db import query
         
-        if not result:
+        # 查询用户名或邮箱匹配的用户
+        users_by_username = await query('users', {'username': username})
+        users_by_email = await query('users', {'email': username})
+        
+        # 合并结果
+        users = users_by_username or users_by_email
+        
+        if not users or len(users) == 0:
+            logger.warning(f"No user found with username/email: {username}")
             return None
             
-        user = User(**dict(result))
+        user = users[0]
         
-        if not verify_password(password, user.password_hash):
+        # 验证密码
+        if not verify_password(password, user.get('password_hash', '')):
+            logger.warning(f"Invalid password for user: {username}")
             return None
             
         return user

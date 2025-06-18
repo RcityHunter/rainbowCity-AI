@@ -199,7 +199,8 @@ class ChatService:
         """
         try:
             # 查询消息记录
-            query_result = query('chat_messages', {'session_id': session_id}, sort=[('created_at', 1)], limit=limit, offset=offset)
+            # 先尝试使用chat_id查询
+            query_result = query('chat_messages', {'chat_id': session_id}, sort=[('created_at', 'ASC')], limit=limit, offset=offset)
             
             # 检查结果是否为协程并等待它
             import asyncio
@@ -208,6 +209,16 @@ class ChatService:
             else:
                 messages = query_result
                 
+            # 如果没有找到消息，尝试使用session_id查询
+            if not messages:
+                logging.info(f"未找到chat_id={session_id}的消息，尝试使用session_id查询")
+                query_result = query('chat_messages', {'session_id': session_id}, sort=[('created_at', 'ASC')], limit=limit, offset=offset)
+                
+                if asyncio.iscoroutine(query_result):
+                    messages = await query_result
+                else:
+                    messages = query_result
+            
             return messages or []
         except Exception as e:
             logging.error(f"获取聊天消息失败: {str(e)}")

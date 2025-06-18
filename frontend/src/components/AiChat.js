@@ -201,7 +201,9 @@ function AiChat() {
     
     try {
       // 获取用户记忆
-      const memoriesResponse = await fetch(`/api/memory/user/${localStorage.getItem('userId')}?limit=5`, {
+      const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://localhost:5001/api';
+      console.log('内存API基础URL:', API_BASE_URL);
+      const memoriesResponse = await fetch(`${API_BASE_URL}/memory/user/${localStorage.getItem('userId')}?limit=5`, {
         headers: {
           'Authorization': `Bearer ${localStorage.getItem('token')}`
         }
@@ -213,7 +215,7 @@ function AiChat() {
       }
       
       // 获取会话摘要
-      const summaryResponse = await fetch(`/api/memory/summary/${sessionId}`, {
+      const summaryResponse = await fetch(`${API_BASE_URL}/memory/summary/${sessionId}`, {
         headers: {
           'Authorization': `Bearer ${localStorage.getItem('token')}`
         }
@@ -372,10 +374,10 @@ function AiChat() {
         return;
       }
       
-      console.log('获取用户对话列表:', `${API_BASE_URL}/api/chats`);
+      console.log('获取用户对话列表:', `${API_BASE_URL}/chats`);
       console.log('使用的认证令牌:', `Bearer ${token.substring(0, 10)}...`);
       
-      const response = await fetch(`${API_BASE_URL}/api/chats`, {
+      const response = await fetch(`${API_BASE_URL}/chats`, {
         method: 'GET',
         headers: {
           'Content-Type': 'application/json',
@@ -435,8 +437,8 @@ function AiChat() {
       // 使用全局定义的API_BASE_URL变量
       const token = localStorage.getItem('token');
       
-      console.log('获取对话消息:', `${API_BASE_URL}/api/chats/${conversationId}/messages`);
-      const response = await fetch(`${API_BASE_URL}/api/chats/${conversationId}/messages`, {
+      console.log('获取对话消息:', `${API_BASE_URL}/chats/${conversationId}/messages`);
+      const response = await fetch(`${API_BASE_URL}/chats/${conversationId}/messages`, {
         method: 'GET',
         headers: {
           'Authorization': `Bearer ${token}`,
@@ -789,12 +791,39 @@ function AiChat() {
         }
         
         // 创建助手消息
+        // 检查响应是否是字符串形式的JSON
+        let responseContent = data.response;
+        let responseType = MessageType.TEXT;
+        let responseMetadata = {};
+        
+        // 如果是字符串形式的JSON，尝试解析
+        if (typeof data.response === 'string') {
+          try {
+            // 尝试解析JSON字符串
+            const parsedResponse = JSON.parse(data.response);
+            console.log('解析响应字符串成功:', parsedResponse);
+            
+            // 如果解析成功并包含响应字段，使用它
+            if (parsedResponse && parsedResponse.response) {
+              responseContent = parsedResponse.response;
+            }
+          } catch (e) {
+            // 如果不是JSON，直接使用原始字符串
+            console.log('响应不是JSON格式，使用原始字符串');
+          }
+        } else if (typeof data.response === 'object') {
+          // 如果是对象，使用content字段或整个对象
+          responseContent = data.response.content || JSON.stringify(data.response);
+          responseType = data.response.type || MessageType.TEXT;
+          responseMetadata = data.response.metadata || {};
+        }
+        
         const assistantMessage = {
           ...createMessage(
             SenderRole.ASSISTANT, 
-            data.response.content || data.response,
-            data.response.type || MessageType.TEXT,
-            data.response.metadata || {}
+            responseContent,
+            responseType,
+            responseMetadata
           ),
           visible: true // 确保消息可见
         };
@@ -924,7 +953,76 @@ function AiChat() {
   // 保存对话到数据库
   const saveConversation = async (messageList, conversationId = null) => {
     console.log('===== saveConversation 开始执行 =====');
-    // ...
+    
+    if (!isLoggedIn) {
+      console.log('用户未登录，不保存对话');
+      return;
+    }
+    
+    try {
+      const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://localhost:5001/api';
+      const token = localStorage.getItem('token');
+      const userId = localStorage.getItem('userId');
+      
+      if (!token || !userId) {
+        console.error('未找到用户认证信息，无法保存对话');
+        return;
+      }
+      
+      // 准备要保存的消息数据
+      const messagesToSave = messageList.filter(msg => 
+        msg.role !== SenderRole.SYSTEM && msg.visible !== false
+      ).map(msg => ({
+        role: msg.role,
+        content: msg.content,
+        type: msg.type,
+        timestamp: msg.timestamp
+      }));
+      
+      if (messagesToSave.length === 0) {
+        console.log('没有可保存的消息');
+        return;
+      }
+      
+      // 确定API端点
+      const endpoint = conversationId 
+        ? `${API_BASE_URL}/chats/${conversationId}/messages` 
+        : `${API_BASE_URL}/chats`;
+      
+      console.log('保存对话到:', endpoint);
+      console.log('保存的消息数量:', messagesToSave.length);
+      
+      // 准备请求数据
+      const requestData = conversationId 
+        ? { messages: messagesToSave }
+        : { 
+            title: `对话 ${new Date().toLocaleString()}`,
+            messages: messagesToSave
+          };
+      
+      // 发送请求
+      const response = await fetch(endpoint, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify(requestData)
+      });
+      
+      if (response.ok) {
+        const data = await response.json();
+        console.log('对话保存成功:', data);
+        return data.chat?.id || data.id;
+      } else {
+        const errorData = await response.json().catch(() => ({}));
+        console.error('保存对话失败:', response.status, errorData);
+        return null;
+      }
+    } catch (error) {
+      console.error('保存对话时发生错误:', error);
+      return null;
+    }
   };
 
   // 渲染消息内容
@@ -941,6 +1039,27 @@ function AiChat() {
         contentToShow = JSON.stringify(contentToShow);
       } catch (e) {
         contentToShow = '[无法显示的内容类型]';
+      }
+    } else {
+      // 如果是字符串，检查是否是JSON字符串
+      if (contentToShow.startsWith('{') && contentToShow.includes('"response":')) {
+        try {
+          // 尝试解析JSON字符串
+          const parsedContent = JSON.parse(contentToShow);
+          console.log('解析消息内容成功:', parsedContent);
+          
+          // 如果解析成功并包含响应字段，使用它
+          if (parsedContent && parsedContent.response) {
+            if (typeof parsedContent.response === 'string') {
+              contentToShow = parsedContent.response;
+            } else if (typeof parsedContent.response === 'object') {
+              contentToShow = parsedContent.response.content || JSON.stringify(parsedContent.response);
+            }
+          }
+        } catch (e) {
+          console.log('消息内容解析失败:', e);
+          // 如果解析失败，保留原始字符串
+        }
       }
     }
     

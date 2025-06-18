@@ -16,6 +16,7 @@ axios.interceptors.request.use(
       config.headers['Authorization'] = `Bearer ${token}`;
     }
     // 添加withCredentials以支持跨域请求中的凭证
+    // 注意：当使用withCredentials=true时，服务器必须返回具体的Origin而不是通配符*
     config.withCredentials = true;
     return config;
   },
@@ -30,7 +31,13 @@ export const register = async (userData) => {
     console.log('Registering user with data:', { ...userData, password: '***' });
     console.log('Registration endpoint:', API_URL + 'register');
     
-    const response = await axios.post(API_URL + 'register', userData);
+    const response = await axios.post(API_URL + 'register', userData, {
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      withCredentials: true // 确保在注册请求中也发送凭证
+    });
+    
     console.log('Registration response:', response.data);
     
     // 注册成功后，如果返回了token，存储到本地
@@ -63,14 +70,17 @@ export const login = async (email, password) => {
   try {
     console.log('Attempting login for:', email);
     // 使用 FastAPI OAuth2 格式发送登录请求
-    const response = await axios.post(API_URL + 'login', new URLSearchParams({
-      'username': email,  // FastAPI OAuth2 使用 username 字段
-      'password': password
-    }), {
+    const formData = new URLSearchParams();
+    formData.append('username', email);  // FastAPI OAuth2 使用 username 字段
+    formData.append('password', password);
+    
+    const response = await axios.post(API_URL + 'login', formData, {
       headers: {
         'Content-Type': 'application/x-www-form-urlencoded'
-      }
+      },
+      withCredentials: true // 确保在登录请求中也发送凭证
     });
+    
     console.log('Login response:', response.data);
     
     // FastAPI OAuth2 返回 access_token 而不是 token
