@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useRef, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { isAuthenticated, getCurrentUser } from '../services/auth_service';
 import './AiChat.dark.css';
@@ -7,86 +7,6 @@ import MemoryContext from './MemoryContext';
 
 // 获取API基础URL，使用React环境变量或默认值
 const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://localhost:5001/api';
-
-// 格式化消息时间戳的工具函数
-const formatMessageTime = (timestamp) => {
-  try {
-    if (typeof timestamp === 'string') {
-      if (timestamp.includes('T')) {
-        // 处理ISO格式时间戳，如 "2023-06-19T09:40:29.123Z"
-        const timePart = timestamp.split('T')[1];
-        let hours = 0;
-        let minutes = 0;
-        
-        if (timePart && timePart.includes('+')) {
-          // 带有时区偏移的时间，如 "09:40:29+08:00"
-          const timeWithoutOffset = timePart.split('+')[0];
-          const timeParts = timeWithoutOffset.split(':');
-          if (timeParts.length >= 2) {
-            hours = parseInt(timeParts[0], 10) || 0;
-            minutes = parseInt(timeParts[1], 10) || 0;
-          }
-        } else if (timePart && timePart.includes('Z')) {
-          // UTC时间，如 "09:40:29.123Z"
-          const timeWithoutZ = timePart.split('Z')[0];
-          const timeParts = timeWithoutZ.split(':');
-          if (timeParts.length >= 2) {
-            hours = parseInt(timeParts[0], 10) || 0;
-            minutes = parseInt(timeParts[1], 10) || 0;
-          }
-          
-          // 调整为当前时区
-          const offset = new Date().getTimezoneOffset();
-          const offsetHours = Math.floor(Math.abs(offset) / 60);
-          const offsetMinutes = Math.abs(offset) % 60;
-          
-          if (offset < 0) { // 东部时区，如亚洲
-            hours += offsetHours;
-            minutes += offsetMinutes;
-          } else { // 西部时区，如美洲
-            hours -= offsetHours;
-            minutes -= offsetMinutes;
-          }
-        } else if (timePart) {
-          // 无时区信息，如 "09:40:29"
-          const timeParts = timePart.split(':');
-          if (timeParts.length >= 2) {
-            hours = parseInt(timeParts[0], 10) || 0;
-            minutes = parseInt(timeParts[1], 10) || 0;
-          }
-        }
-        
-        // 处理进位和溢出
-        if (minutes >= 60) {
-          hours += 1;
-          minutes -= 60;
-        } else if (minutes < 0) {
-          hours -= 1;
-          minutes += 60;
-        }
-         
-        if (hours >= 24) hours -= 24;
-        else if (hours < 0) hours += 24;
-        
-        // 格式化为两位数字
-        const formattedHours = hours.toString().padStart(2, '0');
-        const formattedMinutes = minutes.toString().padStart(2, '0');
-        return `${formattedHours}:${formattedMinutes}`;
-      }
-      
-      // 如果不是ISO格式或处理失败，使用Date对象格式化
-      const date = new Date(timestamp);
-      if (!isNaN(date.getTime())) {
-        return date.toLocaleTimeString('zh-CN', {hour: '2-digit', minute: '2-digit'});
-      }
-    }
-    
-    return ''; // 无法解析的时间戳
-  } catch (e) {
-    console.error('时间格式化错误:', e);
-    return ''; // 出错时不显示时间
-  }
-};
 
 // 消息类型枚举
 const MessageType = {
@@ -224,8 +144,7 @@ function AiChat() {
     const timers = typingMessages.map(message => {
       return setTimeout(() => {
         setMessages(prevMessages => {
-          // 先更新消息内容
-          const updatedMessages = prevMessages.map(msg => {
+          return prevMessages.map(msg => {
             if (msg.id === message.id) {
               // 检查content是否为字符串类型
               if (typeof msg.content !== 'string') {
@@ -258,9 +177,6 @@ function AiChat() {
             }
             return msg;
           });
-          
-          // 应用排序函数确保消息按时间戳排序
-          return sortMessagesByTimestamp(updatedMessages);
         });
       }, 30); // 每30毫秒添加一个字符
     });
@@ -375,84 +291,6 @@ function AiChat() {
     setAttachments(prev => prev.filter(attachment => attachment.id !== attachmentId));
   };
 
-  // 按时间戳对消息进行排序
-  const sortMessagesByTimestamp = (messages) => {
-    // 首先检查是否有消息
-    if (!messages || messages.length === 0) {
-      return [];
-    }
-    
-    // 深拷贝消息数组，避免修改原始数组
-    const sortedMessages = [...messages];
-    
-    // 打印每条消息的时间戳信息，便于调试
-    console.log('排序前的消息时间戳:', sortedMessages.map(m => {
-      // 安全地处理content，可能不是字符串
-      let contentPreview = '';
-      if (m.content !== undefined && m.content !== null) {
-        if (typeof m.content === 'string') {
-          contentPreview = m.content.substring(0, 20) + (m.content.length > 20 ? '...' : '');
-        } else {
-          contentPreview = JSON.stringify(m.content).substring(0, 20) + '...';
-        }
-      }
-      
-      return {
-        role: m.role,
-        content: contentPreview,
-        timestamp: m.timestamp,
-        parsed: m.timestamp ? new Date(m.timestamp).toISOString() : 'invalid'
-      };
-    }));
-    
-    // 按时间戳升序排序（从早到晚）
-    const result = sortedMessages.sort((a, b) => {
-      // 尝试解析时间戳，处理可能的无效时间戳
-      let timeA, timeB;
-      
-      try {
-        timeA = a.timestamp ? new Date(a.timestamp).getTime() : 0;
-        if (isNaN(timeA)) timeA = 0;
-      } catch (e) {
-        console.error('无法解析时间戳A:', a.timestamp, e);
-        timeA = 0;
-      }
-      
-      try {
-        timeB = b.timestamp ? new Date(b.timestamp).getTime() : 0;
-        if (isNaN(timeB)) timeB = 0;
-      } catch (e) {
-        console.error('无法解析时间戳B:', b.timestamp, e);
-        timeB = 0;
-      }
-      
-      // 升序排列，早的在前，晚的在后
-      return timeA - timeB;
-    });
-    
-    // 打印排序后的消息时间戳，便于调试
-    console.log('排序后的消息时间戳:', result.map(m => {
-      // 安全地处理content，可能不是字符串
-      let contentPreview = '';
-      if (m.content !== undefined && m.content !== null) {
-        if (typeof m.content === 'string') {
-          contentPreview = m.content.substring(0, 20) + (m.content.length > 20 ? '...' : '');
-        } else {
-          contentPreview = JSON.stringify(m.content).substring(0, 20) + '...';
-        }
-      }
-      
-      return {
-        role: m.role,
-        content: contentPreview,
-        timestamp: m.timestamp,
-        parsed: m.timestamp ? new Date(m.timestamp).toISOString() : 'invalid'
-      };
-    }));
-    
-    return result;
-  };
-  
   // 创建新的消息对象
   const createMessage = (role, content, type = MessageType.TEXT, additionalData = {}, timestamp = null) => {
     // 创建基本消息对象
@@ -478,48 +316,38 @@ function AiChat() {
     // 合并其他附加数据
     return { ...message, ...additionalData };
   };
-  
+
   // 创建新聊天
   const handleCreateNewChat = () => {
     // 创建新的会话ID
     const newSessionId = generateUUID();
     setSessionId(newSessionId);
-    setCurrentConversationId(null);
-    
-    // 创建时间戳，确保助手消息时间早于系统消息
-    const assistantTime = new Date();
-    const systemTime = new Date(assistantTime.getTime() + 1000); // 系统消息晚1秒
     
     // 重置消息列表
-    const initialMessages = [
-      {
-        id: generateUUID(),
-        role: SenderRole.ASSISTANT,
-        content: '你好！我是彩虹城AI，有什么我可以帮你的吗？',
-        type: MessageType.TEXT,
-        timestamp: assistantTime.toISOString(),
-        visible: true,
-        isTyping: true,
-        displayedContent: '' // 初始为空字符串，将逐字显示
-      },
+    setMessages([
       {
         id: generateUUID(),
         role: SenderRole.SYSTEM,
         content: '你是彩虹城系统的AI助手，专门解答关于彩虹城系统、频率编号和关系管理的问题。',
         type: MessageType.SYSTEM,
-        timestamp: systemTime.toISOString(),
+        timestamp: new Date().toISOString(),
         visible: false
+      },
+      {
+        id: generateUUID(),
+        role: SenderRole.ASSISTANT,
+        content: '你好！我是彩虹城AI助手。我可以帮助你了解彩虹城系统、频率编号和关系管理。有什么我可以帮你的吗？',
+        type: MessageType.TEXT,
+        timestamp: new Date().toISOString(),
+        visible: true
       }
-    ];
-    
-    // 应用排序函数确保消息按时间戳排序
-    setMessages(sortMessagesByTimestamp(initialMessages));
+    ]);
     
     // 创建新的对话记录
     const newConversation = {
       id: newSessionId,
-      title: '新对话 ' + new Date().toLocaleString('zh-CN'),
-      preview: '你好！我是彩虹城AI，有什么我可以帮你的吗？',
+      title: '新对话 ' + new Date().toLocaleString(),
+      preview: '你好！我是彩虹城AI助手...',
       lastUpdated: new Date().toISOString(),
       messages: []
     };
@@ -529,66 +357,66 @@ function AiChat() {
   
   // 从后端获取用户对话列表
   const fetchUserConversations = async () => {
-  try {
-    // 检查用户是否登录
-    if (!isAuthenticated()) {
-      console.log('用户未登录，不获取对话列表');
-      return;
-    }
-    
-    setIsLoadingConversations(true);
-    // 使用全局定义的API_BASE_URL变量
-    const token = localStorage.getItem('token');
-    
-    // 检查token是否存在
-    if (!token) {
-      console.error('未找到用户认证令牌，请重新登录');
-      // 可能需要重定向到登录页
-      return;
-    }
-    
-    console.log('获取用户对话列表:', `${API_BASE_URL}/chats`);
-    console.log('使用的认证令牌:', `Bearer ${token.substring(0, 10)}...`);
-    
-    const response = await fetch(`${API_BASE_URL}/chats`, {
-      method: 'GET',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${token}`,
-        'Cache-Control': 'no-cache',
-        'Pragma': 'no-cache'
-      },
-      credentials: 'include' // 包含cookie信息
-    });
-    
-    if (!response.ok) {
-      if (response.status === 401) {
-        console.error('认证失败，可能令牌已过期，请重新登录');
-        // 清除本地存储的过期令牌
-        localStorage.removeItem('token');
-        setIsLoggedIn(false);
+    try {
+      // 检查用户是否登录
+      if (!isAuthenticated()) {
+        console.log('用户未登录，不获取对话列表');
         return;
       }
-      throw new Error(`获取对话列表失败: ${response.status}`);
-    }
-    
-    const data = await response.json();
-    console.log('获取到的用户对话列表:', data);
-    
-    if (data && Array.isArray(data.conversations)) {
-      // 处理对话列表数据
-      const processedConversations = data.conversations.map(conversation => ({
-        id: conversation.id,
-        title: conversation.title,
-        preview: conversation.preview,
-        lastUpdated: conversation.lastUpdated,
-        messages: conversation.messages
-      }));
       
-      setConversations(processedConversations);
-    } else {
-      console.warn('用户对话列表数据格式不正确:', data);
-    }
+      setIsLoadingConversations(true);
+      // 使用全局定义的API_BASE_URL变量
+      const token = localStorage.getItem('token');
+      
+      // 检查token是否存在
+      if (!token) {
+        console.error('未找到用户认证令牌，请重新登录');
+        // 可能需要重定向到登录页
+        return;
+      }
+      
+      console.log('获取用户对话列表:', `${API_BASE_URL}/chats`);
+      console.log('使用的认证令牌:', `Bearer ${token.substring(0, 10)}...`);
+      
+      const response = await fetch(`${API_BASE_URL}/chats`, {
+        method: 'GET',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`,
+          'Cache-Control': 'no-cache',
+          'Pragma': 'no-cache'
+        },
+        credentials: 'include' // 包含cookie信息
+      });
+      
+      if (!response.ok) {
+        if (response.status === 401) {
+          console.error('认证失败，可能令牌已过期，请重新登录');
+          // 清除本地存储的过期令牌
+          localStorage.removeItem('token');
+          setIsLoggedIn(false);
+          return;
+        }
+        throw new Error(`获取用户对话列表失败: ${response.status}`);
+      }
+      
+      const data = await response.json();
+      console.log('获取到的用户对话列表:', data);
+      
+      if (data && Array.isArray(data.conversations)) {
+        // 处理对话列表数据
+        const processedConversations = data.conversations.map(conversation => ({
+          id: conversation.id,
+          title: conversation.title,
+          preview: conversation.preview,
+          lastUpdated: conversation.lastUpdated,
+          messages: conversation.messages
+        }));
+        
+        setConversations(processedConversations);
+      } else {
+        console.warn('用户对话列表数据格式不正确:', data);
+      }
     } catch (error) {
       console.error('获取用户对话列表失败:', error);
     } finally {
@@ -628,87 +456,36 @@ function AiChat() {
       console.log('获取到的对话消息:', data);
       
       if (data && Array.isArray(data.messages)) {
-      // 处理消息数据
-      const processedMessages = data.messages.map(msg => {
-        console.log('处理历史消息:', msg);
-        // 检查并记录时间戳信息
-        console.log('消息时间戳:', msg.timestamp || msg.created_at || '无时间戳');
-        
-        // 使用createMessage函数创建消息，保留原始时间戳
-        return createMessage(
-          msg.role || SenderRole.USER,
-          msg.content || '',
-          msg.content_type || msg.type || MessageType.TEXT,
-          {
-            id: msg.id || `msg-${Date.now()}-${Math.random()}`,
-            metadata: msg.metadata || {},
-            visible: true // 确保消息可见
-          },
-          // 优先使用timestamp，其次是created_at，最后才是当前时间
-          msg.timestamp || msg.created_at || new Date().toISOString()
-        );
-      });
-      
-      // 检查是否已经有欢迎消息
-      const hasWelcomeMessage = processedMessages.some(msg => 
-        msg.role === SenderRole.ASSISTANT && 
-        msg.content && 
-        typeof msg.content === 'string' &&
-        msg.content.includes('你好！我是彩虹城AI')
-      );
-      
-      // 如果没有欢迎消息，添加一个欢迎消息，并设置极早的时间戳
-      if (!hasWelcomeMessage && processedMessages.length > 0) {
-        // 找到最早的消息时间戳
-        let earliestTimestamp = Number.MAX_SAFE_INTEGER;
-        processedMessages.forEach(msg => {
-          try {
-            const msgTime = new Date(msg.timestamp).getTime();
-            if (!isNaN(msgTime) && msgTime < earliestTimestamp) {
-              earliestTimestamp = msgTime;
-            }
-          } catch (e) {
-            console.error('解析时间戳错误:', e, msg.timestamp);
-          }
+        // 处理消息数据
+        const processedMessages = data.messages.map(msg => {
+          console.log('处理历史消息:', msg);
+          // 使用createMessage函数创建消息，保留原始时间戳
+          return createMessage(
+            msg.role || SenderRole.USER,
+            msg.content || '',
+            msg.content_type || msg.type || MessageType.TEXT,
+            {
+              id: msg.id || `msg-${Date.now()}-${Math.random()}`,
+              metadata: msg.metadata || {}
+            },
+            // 优先使用timestamp，其次是created_at，最后才是当前时间
+            msg.timestamp || msg.created_at || new Date().toISOString()
+          );
         });
         
-        // 创建比最早消息早一天的欢迎消息，确保它始终在最前面
-        const welcomeTimestamp = new Date(earliestTimestamp - 86400000).toISOString(); // 减去24小时
-        console.log('欢迎消息时间戳:', welcomeTimestamp, '最早消息时间戳:', new Date(earliestTimestamp).toISOString());
-        
-        const welcomeMessage = createMessage(
-          SenderRole.ASSISTANT,
-          '你好！我是彩虹城AI，有什么我可以帮你的吗？',
-          MessageType.TEXT,
-          {
-            id: `welcome-${Date.now()}`,
+        // 如果没有消息，添加一个默认的系统消息
+        if (processedMessages.length === 0) {
+          processedMessages.push({
+            id: `system-${Date.now()}`,
+            role: SenderRole.SYSTEM,
+            content: '没有找到历史消息',
+            type: MessageType.TEXT,
+            timestamp: new Date().toISOString(),
             visible: true
-          },
-          welcomeTimestamp
-        );
+          });
+        }
         
-        processedMessages.push(welcomeMessage);
-      }
-      
-      // 如果没有消息，添加一个默认的欢迎消息
-      if (processedMessages.length === 0) {
-        processedMessages.push({
-          id: `welcome-${Date.now()}`,
-          role: SenderRole.ASSISTANT,
-          content: '你好！我是彩虹城AI，有什么我可以帮你的吗？',
-          type: MessageType.TEXT,
-          timestamp: new Date().toISOString(),
-          visible: true
-        });
-      }
-      
-      // 打印排序前后的消息顺序，便于调试
-      console.log('排序前的消息:', processedMessages.map(m => ({ role: m.role, content: typeof m.content === 'string' ? m.content.substring(0, 20) : 'non-string', timestamp: m.timestamp })));
-      const sortedMessages = sortMessagesByTimestamp(processedMessages);
-      console.log('排序后的消息:', sortedMessages.map(m => ({ role: m.role, content: typeof m.content === 'string' ? m.content.substring(0, 20) : 'non-string', timestamp: m.timestamp })));
-      
-      // 按时间戳排序后设置消息
-      setMessages(sortedMessages);
+        setMessages(processedMessages);
       } else {
         console.warn('对话消息数据格式不正确:', data);
         // 设置一个默认消息
@@ -735,225 +512,12 @@ function AiChat() {
         { error: true }
       );
       
-      setMessages(prev => sortMessagesByTimestamp([...prev, errorMessage]));
+      setMessages(prev => [...prev, errorMessage]);
       
       // 发送失败时不需要特殊处理附件
       // 附件状态已经在attachments中维护
     } finally {
       setIsLoading(false);
-    }
-  };
-  
-  // 根据用户消息生成对话标题
-  const generateConversationTitle = (messages) => {
-    // 过滤出用户消息
-    const userMessages = messages.filter(msg => msg.role === SenderRole.USER);
-    
-    if (userMessages.length === 0) {
-      // 如果没有用户消息，使用默认标题
-      const formattedDate = new Date().toLocaleString('zh-CN');
-      return `新对话 ${formattedDate}`;
-    }
-    
-    // 获取最新的用户消息
-    const latestUserMessage = userMessages[userMessages.length - 1];
-    let content = latestUserMessage.content;
-    
-    // 如果内容是对象，尝试提取文本
-    if (typeof content !== 'string') {
-      try {
-        content = JSON.stringify(content);
-      } catch (e) {
-        content = '新对话';
-      }
-    }
-    
-    // 截取前20个字符作为标题，如果太长就加省略号
-    let title = content.trim().substring(0, 20);
-    if (content.length > 20) {
-      title += '...';
-    }
-    
-    // 添加日期
-    const formattedDate = new Date().toLocaleString('zh-CN');
-    return `${title} ${formattedDate}`;
-  };
-  
-  // 保存对话到后端
-  const saveConversation = async (messageList, conversationId = null) => {
-    try {
-      const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://localhost:5001/api';
-      const token = localStorage.getItem('token');
-      const userId = localStorage.getItem('userId');
-      
-      if (!token || !userId) {
-        console.error('未找到用户认证信息，无法保存对话');
-        return null;
-      }
-      
-      // 准备要保存的消息数据
-      const messagesToSave = messageList.filter(msg => 
-        msg.role !== SenderRole.SYSTEM && msg.visible !== false
-      ).map(msg => {
-        // 确保content是字符串类型
-        let content = msg.content;
-        if (content !== null && content !== undefined && typeof content !== 'string') {
-          content = JSON.stringify(content);
-        }
-        return {
-          role: msg.role,
-          content: content || '',
-          type: msg.type,
-          timestamp: msg.timestamp
-        };
-      });
-      
-      if (messagesToSave.length === 0) {
-        console.log('没有可保存的消息');
-        return null;
-      }
-      
-      // 确定API端点
-      const endpoint = conversationId 
-        ? `${API_BASE_URL}/chats/${conversationId}/messages` 
-        : `${API_BASE_URL}/chats`;
-      
-      console.log('保存对话到:', endpoint);
-      console.log('保存的消息数量:', messagesToSave.length);
-      
-      // 准备请求数据
-      let requestData;
-      
-      if (conversationId) {
-        // 如果是向现有对话添加消息，只发送最新的一条消息
-        if (messagesToSave.length > 0) {
-          // 取最新的一条消息，并确保包含必需的role和content字段
-          const latestMessage = messagesToSave[messagesToSave.length - 1];
-          
-          // 确保content是字符串类型
-          let content = latestMessage.content;
-          if (content !== null && content !== undefined && typeof content !== 'string') {
-            content = JSON.stringify(content);
-          }
-          
-          requestData = {
-            role: latestMessage.role,
-            content: content || '',
-            type: latestMessage.type || 'text'
-          };
-          
-          // 如果有时间戳，也包含进去
-          if (latestMessage.timestamp) {
-            requestData.timestamp = latestMessage.timestamp;
-          }
-          
-          // 如果是用户消息，更新对话标题
-          if (latestMessage.role === SenderRole.USER) {
-            // 生成新标题
-            const newTitle = generateConversationTitle([...messageList]);
-            requestData.title = newTitle;
-          }
-          
-          console.log('发送单条消息到现有对话:', requestData);
-        } else {
-          console.log('没有消息可发送');
-          return null;
-        }
-      } else {
-        // 如果是创建新对话，发送全部消息
-        // 使用生成的标题
-        const title = generateConversationTitle(messageList);
-        requestData = { 
-          title: title,
-          messages: messagesToSave
-        };
-        console.log('创建新对话并发送所有消息:', requestData);
-      }
-      
-      // 发送请求
-      const response = await fetch(endpoint, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
-        },
-        body: JSON.stringify(requestData)
-      });
-      
-      if (response.ok) {
-        const data = await response.json();
-        console.log('对话保存成功:', data);
-        
-        // 如果是新创建的对话，将其添加到侧边栏列表中
-        if (!conversationId && data.chat) {
-          const newConversation = {
-            id: data.chat.id,
-            title: data.chat.title || `对话 ${new Date().toLocaleString('zh-CN')}`,
-            preview: messagesToSave.length > 0 ? 
-              (messagesToSave[0].content.substring(0, 30) + '...') : 
-              '新对话',
-            lastUpdated: new Date().toISOString(),
-            messages: sortMessagesByTimestamp(messageList) // 确保消息按时间戳排序
-          };
-          
-          // 更新对话列表状态
-          setConversations(prev => {
-            // 删除之前可能添加的临时对话
-            const filteredPrev = prev.filter(conv => conv.id !== sessionId);
-            return [newConversation, ...filteredPrev];
-          });
-          
-          // 更新当前会话ID
-          setSessionId(data.chat.id);
-          setCurrentConversationId(data.chat.id);
-          
-          console.log('新对话已添加到侧边栏:', newConversation);
-          
-          // 确保消息列表也按时间戳排序
-          setMessages(sortMessagesByTimestamp(messageList));
-        } 
-        // 如果是更新现有对话，更新侧边栏中的对话预览
-        else if (conversationId && messagesToSave.length > 0) {
-          const latestMessage = messagesToSave[messagesToSave.length - 1];
-          
-          setConversations(prev => prev.map(conv => {
-            if (conv.id === conversationId) {
-              // 更新对话预览和时间
-              const updates = {
-                preview: latestMessage.content.substring(0, 30) + '...',
-                lastUpdated: new Date().toISOString(),
-                messages: sortMessagesByTimestamp(messageList) // 确保消息按时间戳排序
-              };
-              
-              // 如果响应中包含新标题，也更新标题
-              if (data.title) {
-                updates.title = data.title;
-              } else if (latestMessage.role === SenderRole.USER) {
-                // 如果是用户消息且服务器没有返回新标题，尝试生成一个
-                const allMessages = [...prev.find(c => c.id === conversationId).messages || [], latestMessage];
-                updates.title = generateConversationTitle(allMessages);
-              }
-              
-              return {
-                ...conv,
-                ...updates
-              };
-            }
-            return conv;
-          }));
-          
-          console.log('侧边栏对话已更新:', conversationId);
-        }
-        
-        return data.chat?.id || data.id;
-      } else {
-        const errorData = await response.json().catch(() => ({}));
-        console.error('保存对话失败:', response.status, errorData);
-        return null;
-      }
-    } catch (error) {
-      console.error('保存对话时发生错误:', error);
-      return null;
     }
   };
   
@@ -1019,26 +583,11 @@ function AiChat() {
       }
     }
     
-    // 添加用户消息到状态并按时间戳排序
-    setMessages(prev => sortMessagesByTimestamp([...prev, ...userMessages]));
+    // 添加用户消息到状态
+    setMessages(prev => [...prev, ...userMessages]);
     setTextInput('');
     setAttachments([]);
     setIsLoading(true);
-    
-    // 如果是新对话（没有currentConversationId），立即更新侧边栏
-    if (!currentConversationId && isLoggedIn) {
-      // 创建一个临时对话项，显示在侧边栏中
-      const tempConversation = {
-        id: sessionId, // 使用当前会话ID
-        title: generateConversationTitle(sortMessagesByTimestamp([...messages, ...userMessages])),
-        preview: messageContent.substring(0, 30) + (messageContent.length > 30 ? '...' : ''),
-        lastUpdated: new Date().toISOString(),
-        messages: []
-      };
-      
-      // 立即更新对话列表，不等待API响应
-      setConversations(prev => [tempConversation, ...prev]);
-    }
     setError(null);
     
     try {
@@ -1047,8 +596,7 @@ function AiChat() {
       let allMessages = [];
       setMessages(prevMessages => {
         allMessages = [...prevMessages];
-        // 确保消息按时间戳排序
-        return sortMessagesByTimestamp(prevMessages);
+        return prevMessages; // 不改变状态
       });
       
       // 限制发送给后端的消息历史数量，只发送最近的消息和系统消息
@@ -1312,8 +860,7 @@ function AiChat() {
           
           // 使用回调函数形式更新消息，确保基于最新的状态
           setMessages(prevMessages => {
-            // 添加新消息并按时间戳排序
-            const updatedMessages = sortMessagesByTimestamp([...prevMessages, assistantMessage, toolMessage]);
+            const updatedMessages = [...prevMessages, assistantMessage, toolMessage];
             
             // 如果用户已登录，自动保存对话
             if (isLoggedIn) {
@@ -1335,8 +882,7 @@ function AiChat() {
         } else {
           // 使用回调函数形式更新消息，确保基于最新的状态
           setMessages(prevMessages => {
-            // 添加新消息并按时间戳排序
-            const updatedMessages = sortMessagesByTimestamp([...prevMessages, assistantMessage]);
+            const updatedMessages = [...prevMessages, assistantMessage];
             
             // 如果用户已登录，自动保存对话
             if (isLoggedIn) {
@@ -1377,60 +923,108 @@ function AiChat() {
         errorContent = `${errorContent}\n建议: 请尝试重新登录。`;
       } else if (errorContent.includes('服务器内部错误')) {
         errorContent = `${errorContent}\n建议: 请联系管理员查看服务器日志。`;
+      };
+      console.log('创建新对话并发送所有消息:', requestData);
+    }
+    
+    // 发送请求
+    const response = await fetch(endpoint, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`
+      },
+      body: JSON.stringify(requestData)
+    });
+    
+    if (response.ok) {
+      const data = await response.json();
+      console.log('对话保存成功:', data);
+      
+      // 如果是新创建的对话，将其添加到侧边栏列表中
+      if (!conversationId && data.chat) {
+        const newConversation = {
+          id: data.chat.id,
+          title: data.chat.title || `对话 ${new Date().toLocaleString()}`,
+          preview: messagesToSave.length > 0 ? 
+            (messagesToSave[0].content.substring(0, 30) + '...') : 
+            '新对话',
+          lastUpdated: new Date().toISOString(),
+          messages: []
+        };
+        
+        // 更新对话列表状态
+        setConversations(prev => [newConversation, ...prev]);
+        
+        // 更新当前会话ID
+        setSessionId(data.chat.id);
+        setCurrentConversationId(data.chat.id);
+        
+        console.log('新对话已添加到侧边栏:', newConversation);
+      } 
+      // 如果是更新现有对话，更新侧边栏中的对话预览
+      else if (conversationId && messagesToSave.length > 0) {
+        const latestMessage = messagesToSave[messagesToSave.length - 1];
+        
+        setConversations(prev => prev.map(conv => {
+          if (conv.id === conversationId) {
+            return {
+              ...conv,
+              preview: latestMessage.content.substring(0, 30) + '...',
+              lastUpdated: new Date().toISOString()
+            };
+          }
+          return conv;
+        }));
+        
+        console.log('侧边栏对话已更新:', conversationId);
       }
       
-      // 添加错误消息到聊天界面并按时间戳排序
-      setMessages(prevMessages => sortMessagesByTimestamp([
-        ...prevMessages,
-        {
-          id: generateUUID(),
-          role: SenderRole.ASSISTANT,
-          content: errorContent,
-          timestamp: new Date().toISOString(),
-          error: true
-        }
-      ]));
+      return data.chat?.id || data.id;
+    } else {
+      const errorData = await response.json().catch(() => ({}));
+      console.error('保存对话失败:', response.status, errorData);
+      return null;
     }
+  } catch (error) {
+    console.error('保存对话时发生错误:', error);
+    return null;
   }
+};
+
+// 渲染消息内容
+const renderMessageContent = (message) => {
+  // 准备要显示的内容，如果在打字中则使用displayedContent
+  let contentToShow = message.isTyping ? message.displayedContent : message.content;
   
-  // 处理工具操作
-  const handleToolAction = (toolId, action) => {
-    console.log(`处理工具操作: ${action} 工具ID: ${toolId}`);
-    // 根据工具ID和操作类型执行相应的操作
-    if (action === 'navigate') {
-      // 这里可以添加导航到工具页面的逻辑
-      // 例如: navigate(`/tools/${toolId}`);
+  // 确保contentToShow是字符串类型，防止charAt错误
+  if (contentToShow === null || contentToShow === undefined) {
+    contentToShow = '';
+  } else if (typeof contentToShow !== 'string') {
+    // 如果是对象或其他类型，尝试转换为字符串
+    try {
+      contentToShow = JSON.stringify(contentToShow);
+    } catch (e) {
+      contentToShow = '[无法显示的内容类型]';
     }
-  };
-  
-  // 渲染消息内容
-  const renderMessageContent = (message) => {
-    // 准备要显示的内容，如果在打字中则使用displayedContent
+  } else {
+    // 如果是字符串，检查是否是JSON字符串
+    if (contentToShow.startsWith('{') && contentToShow.includes('"response":')) {
     let contentToShow = message.isTyping ? message.displayedContent : message.content;
     
     // 确保contentToShow是字符串类型，防止charAt错误
     if (contentToShow === null || contentToShow === undefined) {
       contentToShow = '';
-    } else if (typeof contentToShow === 'object') {
-      // 如果是对象类型，先检查是否有response字段
-      if (contentToShow.response) {
-        contentToShow = typeof contentToShow.response === 'string' ? 
-          contentToShow.response : 
-          (contentToShow.response.content || JSON.stringify(contentToShow.response));
-      } else if (contentToShow.content) {
-        contentToShow = contentToShow.content;
-      } else {
-        // 如果没有这些字段，尝试转换为JSON字符串
-        try {
-          contentToShow = JSON.stringify(contentToShow);
-        } catch (e) {
-          contentToShow = '[无法显示的内容类型]';
-        }
+    } else if (typeof contentToShow !== 'string') {
+      // 如果是对象或其他类型，尝试转换为字符串
+      try {
+        contentToShow = JSON.stringify(contentToShow);
+      } catch (e) {
+        contentToShow = '[无法显示的内容类型]';
       }
-    } else if (typeof contentToShow === 'string') {
+    } else {
       // 如果是字符串，检查是否是JSON字符串
-      if ((contentToShow.startsWith('{') && contentToShow.endsWith('}')) || 
-          (contentToShow.startsWith('[') && contentToShow.endsWith(']'))) {
+      if (contentToShow.startsWith('{') && contentToShow.includes('"response":')) {
         try {
           // 尝试解析JSON字符串
           const parsedContent = JSON.parse(contentToShow);
@@ -1443,8 +1037,6 @@ function AiChat() {
             } else if (typeof parsedContent.response === 'object') {
               contentToShow = parsedContent.response.content || JSON.stringify(parsedContent.response);
             }
-          } else if (parsedContent && parsedContent.content) {
-            contentToShow = parsedContent.content;
           }
         } catch (e) {
           console.log('消息内容解析失败:', e);
@@ -1453,7 +1045,6 @@ function AiChat() {
       }
     }
     
-    // 根据消息类型渲染不同的内容
     switch (message.type) {
       case MessageType.MIXED:
         // 混合消息（文本+图片）
@@ -1613,155 +1204,115 @@ function AiChat() {
         
         {/* 聊天消息区域 */}
         <div className="chat-messages" ref={messagesEndRef}>
-          {(() => {
-            // 首先按时间戳排序
-            const sortedMessages = sortMessagesByTimestamp(messages).filter(message => message.visible);
-            
-            // 找出欢迎消息
-            let welcomeMessage = null;
-            let otherMessages = [];
-            
-            // 分离欢迎消息和其他消息
-            sortedMessages.forEach(msg => {
-              if (msg.role === SenderRole.ASSISTANT && 
-                  typeof msg.content === 'string' && 
-                  msg.content.includes('你好！我是彩虹城AI')) {
-                welcomeMessage = msg;
-              } else {
-                otherMessages.push(msg);
-              }
-            });
-            
-            // 如果没有欢迎消息，创建一个
-            if (!welcomeMessage) {
-              welcomeMessage = {
-                id: `welcome-${Date.now()}`,
-                role: SenderRole.ASSISTANT,
-                content: '你好！我是彩虹城AI，有什么我可以帮你的吗？',
-                type: MessageType.TEXT,
-                timestamp: new Date(0).toISOString(), // 使用最早的时间戳
-                visible: true
-              };
-            }
-            
-            // 将其他消息按照用户和AI交替的方式分组
-            const userMessages = otherMessages.filter(m => m.role === SenderRole.USER);
-            const assistantMessages = otherMessages.filter(m => m.role === SenderRole.ASSISTANT);
-            const systemMessages = otherMessages.filter(m => m.role === SenderRole.SYSTEM);
-            
-            // 创建问答对
-            const qaGroups = [];
-            
-            // 将用户消息与助手消息匹配成问答对
-            userMessages.forEach((userMsg, index) => {
-              const userTime = new Date(userMsg.timestamp).getTime();
-              
-              // 找到用户消息后的第一条助手消息
-              const nextAssistantMsg = assistantMessages.find(assistantMsg => {
-                const assistantTime = new Date(assistantMsg.timestamp).getTime();
-                return assistantTime > userTime;
-              });
-              
-              // 如果找到了匹配的助手消息，则创建一个问答对
-              if (nextAssistantMsg) {
-                qaGroups.push({ user: userMsg, assistant: nextAssistantMsg });
-                // 从助手消息列表中移除已匹配的消息
-                const index = assistantMessages.indexOf(nextAssistantMsg);
-                if (index > -1) {
-                  assistantMessages.splice(index, 1);
-                }
-              } else {
-                // 如果没有匹配的助手消息，则只显示用户消息
-                qaGroups.push({ user: userMsg });
-              }
-            });
-            
-            // 处理未匹配的助手消息
-            assistantMessages.forEach(assistantMsg => {
-              qaGroups.push({ assistant: assistantMsg });
-            });
-            
-            // 按时间戳对问答对进行排序
-            qaGroups.sort((a, b) => {
-              const timeA = a.user ? new Date(a.user.timestamp).getTime() : 
-                             a.assistant ? new Date(a.assistant.timestamp).getTime() : 0;
-              const timeB = b.user ? new Date(b.user.timestamp).getTime() : 
-                             b.assistant ? new Date(b.assistant.timestamp).getTime() : 0;
-              return timeA - timeB;
-            });
-            
-            // 渲染所有消息，先渲染欢迎消息
-            const allMessages = [];
-            
-            // 添加欢迎消息
-            allMessages.push(
+          {messages
+            .filter(message => message.visible)
+            .map((message) => (
               <div 
-                key={welcomeMessage.id} 
-                className="message-wrapper assistant-wrapper"
+                key={message.id} 
+                className={`message-wrapper ${message.role === SenderRole.ASSISTANT ? 'assistant-wrapper' : 
+                           message.role === SenderRole.USER ? 'user-wrapper' : 'system-wrapper'}`}
               >
-                <div className="message assistant">
-                  <div className="message-role">彩虹城AI</div>
-                  {renderMessageContent(welcomeMessage)}
+                <div 
+                  className={`message ${message.role === SenderRole.ASSISTANT ? 'assistant' : 
+                             message.role === SenderRole.USER ? 'user' : 'system'} 
+                             ${message.error ? 'error' : ''}`}
+                >
+                  <div className="message-role">
+                    {message.role === SenderRole.USER ? '你' : 
+                     message.role === SenderRole.ASSISTANT ? '彩虹城AI' : 
+                     '系统'}
+                    <span className="message-time">
+                      {(() => {
+                        // 直接使用原始时间戳中的时间信息
+                        try {
+                          // 打印调试信息，查看时间戳格式
+                          console.log('消息时间戳:', message.id, message.timestamp);
+                          
+                          const timestamp = message.timestamp;
+                          
+                          // 如果是ISO格式的时间字符串，直接使用其时间部分
+                          if (typeof timestamp === 'string') {
+                            // 处理不同格式的ISO时间字符串
+                            if (timestamp.includes('T')) {
+                              // 例如从 "2025-06-19T09:40:29+08:00" 或 "2025-06-19T09:40:29.123Z" 提取时间
+                              const timePart = timestamp.split('T')[1];
+                              // 先处理时区偏移
+                              let hours, minutes;
+                              
+                              if (timePart.includes('+')) {
+                                // 如果有时区偏移，如 "09:40:29+08:00"
+                                const timeWithoutOffset = timePart.split('+')[0];
+                                [hours, minutes] = timeWithoutOffset.split(':').map(Number);
+                              } else if (timePart.includes('Z')) {
+                                // UTC时间，如 "09:40:29.123Z"
+                                const timeWithoutZ = timePart.split('Z')[0];
+                                const timeParts = timeWithoutZ.split(':').map(Number);
+                                hours = timeParts[0];
+                                minutes = timeParts[1];
+                                
+                                // 调整为当前时区
+                                const offset = new Date().getTimezoneOffset();
+                                const offsetHours = Math.floor(Math.abs(offset) / 60);
+                                const offsetMinutes = Math.abs(offset) % 60;
+                                
+                                if (offset < 0) { // 东部时区，如亚洲
+                                  hours += offsetHours;
+                                  minutes += offsetMinutes;
+                                } else { // 西部时区，如美洲
+                                  hours -= offsetHours;
+                                  minutes -= offsetMinutes;
+                                }
+                                
+                                // 处理进位和溢出
+                                if (minutes >= 60) {
+                                  hours += 1;
+                                  minutes -= 60;
+                                } else if (minutes < 0) {
+                                  hours -= 1;
+                                  minutes += 60;
+                                }
+                                
+                                if (hours >= 24) hours -= 24;
+                                else if (hours < 0) hours += 24;
+                              } else {
+                                // 无时区信息，如 "09:40:29"
+                                [hours, minutes] = timePart.split(':').map(Number);
+                              }
+                              
+                              // 格式化为两位数字
+                              const formattedHours = hours.toString().padStart(2, '0');
+                              const formattedMinutes = minutes.toString().padStart(2, '0');
+                              return `${formattedHours}:${formattedMinutes}`;
+                            }
+                          }
+                          
+                          // 如果不是ISO格式或处理失败，使用Date对象格式化
+                          const date = new Date(timestamp);
+                          if (!isNaN(date.getTime())) {
+                            return date.toLocaleTimeString('zh-CN', {hour: '2-digit', minute: '2-digit'});
+                          }
+                          
+                          return ''; // 无法解析的时间戳
+                        } catch (e) {
+                          console.error('时间格式化错误:', e, message);
+                          return ''; // 出错时不显示时间
+                        }
+                      })()}
+                    </span>
+                  </div>
+                  {renderMessageContent(message)}
                 </div>
               </div>
-            );
-            
-            // 添加系统消息
-            systemMessages.forEach(sysMsg => {
-              allMessages.push(
-                <div 
-                  key={sysMsg.id} 
-                  className={`message-wrapper system-wrapper`}
-                >
-                  <div className="message system">
-                    <div className="message-role">系统</div>
-                    {renderMessageContent(sysMsg)}
-                  </div>
-                </div>
-              );
-            });
-            
-            // 添加问答对
-            qaGroups.forEach((group, index) => {
-              // 渲染用户消息
-              if (group.user) {
-                allMessages.push(
-                  <div 
-                    key={group.user.id} 
-                    className="message-wrapper user-wrapper"
-                  >
-                    <div className="message user">
-                      <div className="message-role">你</div>
-                      {renderMessageContent(group.user)}
-                    </div>
-                  </div>
-                );
-              }
-              
-              // 渲染助手消息
-              if (group.assistant) {
-                allMessages.push(
-                  <div 
-                    key={group.assistant.id} 
-                    className="message-wrapper assistant-wrapper"
-                  >
-                    <div className="message assistant">
-                      <div className="message-role">彩虹城AI</div>
-                      {renderMessageContent(group.assistant)}
-                    </div>
-                  </div>
-                );
-              }
-            });
-            
-            return allMessages;
-          })()}
+            ))}
           
           {isLoading && (
             <div className="message-wrapper assistant-wrapper">
               <div className="message assistant">
                 <div className="message-role">
                   彩虹城AI
+                  <span className="message-time">
+                    {new Date().toLocaleTimeString('zh-CN', {hour: '2-digit', minute: '2-digit'})}
+                  </span>
                 </div>
                 <div className="thinking">
                   <div className="thinking-dots">
