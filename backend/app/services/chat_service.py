@@ -53,20 +53,64 @@ class ChatService:
             }
             
             # 保存消息到数据库
-            result = create('chat_messages', message_data)
+            # 同时保存到 chat_messages 和 message 表
+            chat_messages_result = create('chat_messages', message_data)
+            
+            # 创建 message 表的消息数据
+            message_table_data = {
+                'id': message_id,
+                'chat_id': session_id,  # 使用 session_id 作为 chat_id
+                'role': role,
+                'content': content,
+                'timestamp': created_at,
+                'metadata': metadata or {}
+            }
+            
+            # 如果有其他字段需要添加
+            if content_type != "text":
+                message_table_data['type'] = content_type
+                
+            # 保存到 message 表
+            message_table_result = create('message', message_table_data)
+            
+            # 合并两个结果
+            result = chat_messages_result
             
             # 检查结果是否为协程并等待它
             import asyncio
-            if asyncio.iscoroutine(result):
+            
+            # 处理 chat_messages 表的结果
+            if asyncio.iscoroutine(chat_messages_result):
                 try:
-                    # 添加超时处理 - 增加超时时间从3秒到15秒
-                    saved_message = await asyncio.wait_for(result, timeout=15.0)
+                    # 添加超时处理
+                    saved_chat_message = await asyncio.wait_for(chat_messages_result, timeout=15.0)
+                    logging.info(f"chat_messages表消息保存成功: session_id={session_id}, id={message_id}")
                 except asyncio.TimeoutError:
-                    logging.error(f"保存消息超时(15秒)，返回原始数据: session_id={session_id}, user_id={user_id}, role={role}")
-                    # 超时时返回原始数据，不中断流程
-                    return message_data
+                    logging.error(f"chat_messages表保存消息超时(15秒): session_id={session_id}, user_id={user_id}, role={role}")
+                    saved_chat_message = message_data
+                except Exception as e:
+                    logging.error(f"chat_messages表保存消息失败: {str(e)}")
+                    saved_chat_message = message_data
             else:
-                saved_message = result
+                saved_chat_message = chat_messages_result
+                
+            # 处理 message 表的结果
+            if asyncio.iscoroutine(message_table_result):
+                try:
+                    # 添加超时处理
+                    saved_message_table = await asyncio.wait_for(message_table_result, timeout=15.0)
+                    logging.info(f"message表消息保存成功: chat_id={session_id}, id={message_id}")
+                except asyncio.TimeoutError:
+                    logging.error(f"message表保存消息超时(15秒): chat_id={session_id}, role={role}")
+                    saved_message_table = message_table_data
+                except Exception as e:
+                    logging.error(f"message表保存消息失败: {str(e)}")
+                    saved_message_table = message_table_data
+            else:
+                saved_message_table = message_table_result
+                
+            # 优先使用 message 表的结果作为返回值，因为前端主要使用该表
+            saved_message = saved_message_table or saved_chat_message
                 
             # 临时禁用会话更新，避免数据库阻塞
             # 注释掉会话更新代码，以确保消息流程不会被阻塞

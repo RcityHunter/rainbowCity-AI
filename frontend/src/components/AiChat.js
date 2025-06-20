@@ -148,8 +148,12 @@ function AiChat() {
   const [attachments, setAttachments] = useState([]);
   const [savedAttachments, setSavedAttachments] = useState([]); // 已保存的附件，即使发送后仍然可用
   const [isLoading, setIsLoading] = useState(false);
-  // 错误状态
   const [error, setError] = useState(null);
+  const [loadingError, setLoadingError] = useState(null);
+  
+  // 打字机效果状态 - 单独管理
+  const [typingState, setTypingState] = useState({});
+  // 格式: { messageId: { isTyping: true, displayedContent: '部分内容' } }
   
   // 会话状态
   const [sessionId, setSessionId] = useState(generateUUID());
@@ -214,53 +218,75 @@ function AiChat() {
     }
   }, []);
   
-  // 实现打字机效果
+  // 全新打字机效果实现 - 使用单独的状态管理
   useEffect(() => {
-    const typingMessages = messages.filter(msg => msg.isTyping && msg.displayedContent !== msg.content);
+    // 检查是否有新的AI消息需要添加到打字机状态中
+    const aiMessages = messages.filter(m => m.role === SenderRole.ASSISTANT);
     
-    if (typingMessages.length === 0) return;
+    // 对于每个AI消息，如果它不在typingState中，则添加它
+    aiMessages.forEach(message => {
+      if (!typingState[message.id] && message.content) {
+        console.log(`发现新的AI消息，添加到打字机状态: ${message.id.substring(0, 6)}`);
+        setTypingState(prev => ({
+          ...prev,
+          [message.id]: {
+            isTyping: true,
+            displayedContent: '',
+            fullContent: typeof message.content === 'string' ? 
+              message.content : 
+              JSON.stringify(message.content)
+          }
+        }));
+      }
+    });
+  }, [messages, typingState]);
+  
+  // 处理打字机效果的核心逻辑
+  useEffect(() => {
+    // 找出所有正在打字的消息
+    const typingMessageIds = Object.keys(typingState).filter(id => 
+      typingState[id].isTyping && 
+      typingState[id].displayedContent !== typingState[id].fullContent
+    );
     
-    // 对每个正在打字的消息设置定时器
-    const timers = typingMessages.map(message => {
+    if (typingMessageIds.length > 0) {
+      console.log(`当前有 ${typingMessageIds.length} 条消息正在打字:`, 
+        typingMessageIds.map(id => id.substring(0, 6)));
+    }
+    
+    // 为每个正在打字的消息创建定时器
+    const timers = typingMessageIds.map(id => {
       return setTimeout(() => {
-        setMessages(prevMessages => {
-          // 先更新消息内容
-          const updatedMessages = prevMessages.map(msg => {
-            if (msg.id === message.id) {
-              // 检查content是否为字符串类型
-              if (typeof msg.content !== 'string') {
-                // 如果不是字符串，将content转换为字符串或停止打字
-                let stringContent;
-                try {
-                  stringContent = msg.content ? JSON.stringify(msg.content) : '';
-                } catch (e) {
-                  stringContent = '[无法显示的内容类型]';
-                }
-                return { 
-                  ...msg, 
-                  content: stringContent,
-                  displayedContent: stringContent,
-                  isTyping: false // 停止打字效果
-                };
-              }
-              
-              // 如果显示内容已经等于完整内容，则停止打字
-              if (msg.displayedContent === msg.content) {
-                return { ...msg, isTyping: false };
-              }
-              
-              // 否则添加下一个字符
-              const nextChar = msg.content.charAt(msg.displayedContent.length);
-              return { 
-                ...msg, 
-                displayedContent: msg.displayedContent + nextChar 
-              };
-            }
-            return msg;
-          });
+        setTypingState(prev => {
+          const messageState = prev[id];
+          if (!messageState) return prev;
           
-          // 应用排序函数确保消息按时间戳排序
-          return sortMessagesByTimestamp(updatedMessages);
+          // 如果已经打字完成，则停止打字
+          if (messageState.displayedContent === messageState.fullContent) {
+            console.log(`消息 ${id.substring(0, 6)} 打字完成`);
+            return {
+              ...prev,
+              [id]: {
+                ...messageState,
+                isTyping: false
+              }
+            };
+          }
+          
+          // 添加下一个字符
+          const nextChar = messageState.fullContent.charAt(messageState.displayedContent.length);
+          const newDisplayedContent = messageState.displayedContent + nextChar;
+          
+          console.log(`消息 ${id.substring(0, 6)} 添加字符: '${nextChar}', 进度: ${newDisplayedContent.length}/${messageState.fullContent.length}`);
+          
+          return {
+            ...prev,
+            [id]: {
+              ...messageState,
+              displayedContent: newDisplayedContent,
+              isTyping: newDisplayedContent !== messageState.fullContent
+            }
+          };
         });
       }, 30); // 每30毫秒添加一个字符
     });
@@ -269,7 +295,7 @@ function AiChat() {
     return () => {
       timers.forEach(timer => clearTimeout(timer));
     };
-  }, [messages]);
+  }, [typingState]);
   
   // 当消息更新时，尝试获取最新的记忆上下文
   useEffect(() => {
@@ -455,6 +481,9 @@ function AiChat() {
   
   // 创建新的消息对象
   const createMessage = (role, content, type = MessageType.TEXT, additionalData = {}, timestamp = null) => {
+    // 提取additionalData中的属性，但不包括打字机相关属性
+    const { isTyping: additionalIsTyping, displayedContent: additionalDisplayedContent, ...otherAdditionalData } = additionalData;
+    
     // 创建基本消息对象
     const message = {
       id: additionalData.id || generateUUID(),
@@ -464,8 +493,10 @@ function AiChat() {
       // 如果提供了时间戳，使用提供的时间戳，否则使用当前时间
       timestamp: timestamp || additionalData.timestamp || new Date().toISOString(),
       visible: true,
-      isTyping: role === SenderRole.ASSISTANT, // 助手消息默认启用打字机效果
-      displayedContent: role === SenderRole.ASSISTANT ? '' : content, // 初始显示内容为空
+      // 助手消息默认启用打字机效果
+      isTyping: role === SenderRole.ASSISTANT || additionalIsTyping === true,
+      // 助手消息初始显示内容为空，其他消息显示完整内容
+      displayedContent: role === SenderRole.ASSISTANT ? '' : content,
     };
     
     // 如果是混合消息，确保数据结构正确
@@ -475,8 +506,19 @@ function AiChat() {
       };
     }
     
-    // 合并其他附加数据
-    return { ...message, ...additionalData };
+    // 合并其他附加数据，但不覆盖打字机相关属性
+    const result = { ...message, ...otherAdditionalData };
+    
+    // 打印新创建的消息信息，包括打字机状态
+    console.log('创建新消息:', {
+      id: result.id.substring(0, 6),
+      role: result.role,
+      isTyping: result.isTyping,
+      displayedContent: result.displayedContent ? '长度:' + result.displayedContent.length : '空',
+      content: result.content ? '长度:' + result.content.length : '空'
+    });
+    
+    return result;
   };
   
   // 创建新聊天
@@ -604,13 +646,8 @@ function AiChat() {
     try {
       setIsLoading(true);
       setCurrentConversationId(conversationId);
-      setSessionId(conversationId); // 设置会话ID
-      
-      // 获取选中对话的消息
-      // 使用全局定义的API_BASE_URL变量
+      setSessionId(conversationId);
       const token = localStorage.getItem('token');
-      
-      console.log('获取对话消息:', `${API_BASE_URL}/chats/${conversationId}/messages`);
       const response = await fetch(`${API_BASE_URL}/chats/${conversationId}/messages`, {
         method: 'GET',
         headers: {
@@ -619,43 +656,73 @@ function AiChat() {
           'Pragma': 'no-cache'
         }
       });
-      
-      if (!response.ok) {
-        throw new Error(`获取对话消息失败: ${response.status}`);
-      }
-      
+      if (!response.ok) throw new Error(`获取对话消息失败: ${response.status}`);
       const data = await response.json();
-      console.log('获取到的对话消息:', data);
-      
       if (data && Array.isArray(data.messages)) {
-      // 处理消息数据
-      const processedMessages = data.messages.map(msg => {
-        console.log('处理历史消息:', msg);
-        // 检查并记录时间戳信息
-        console.log('消息时间戳:', msg.timestamp || msg.created_at || '无时间戳');
+        // 对于从后端加载的历史消息，我们需要确保它们不会触发打字机效果
+        // 创建一个修改版的createMessage函数，强制isTyping为false
+        const createHistoricalMessage = (role, content, type, additionalData, timestamp) => {
+          const msg = createMessage(role, content, type, additionalData, timestamp);
+          // 确保历史消息不会触发打字机效果
+          msg.isTyping = false;
+          msg.displayedContent = content; // 立即显示完整内容
+          return msg;
+        };
         
-        // 使用createMessage函数创建消息，保留原始时间戳
-        return createMessage(
-          msg.role || SenderRole.USER,
-          msg.content || '',
-          msg.content_type || msg.type || MessageType.TEXT,
-          {
-            id: msg.id || `msg-${Date.now()}-${Math.random()}`,
-            metadata: msg.metadata || {},
-            visible: true // 确保消息可见
-          },
-          // 优先使用timestamp，其次是created_at，最后才是当前时间
-          msg.timestamp || msg.created_at || new Date().toISOString()
+        const processedMessages = data.messages.map(msg => {
+          // 首先处理消息内容，确保我们得到纯文本
+          let processedContent = msg.content || '';
+          
+          // 如果是字符串形式的JSON，尝试解析
+          if (typeof processedContent === 'string' && 
+              ((processedContent.startsWith('{') && processedContent.endsWith('}')) || 
+               (processedContent.startsWith('[') && processedContent.endsWith(']')))) {
+            try {
+              const parsedContent = JSON.parse(processedContent);
+              console.log('解析历史消息内容成功:', parsedContent);
+              
+              // 如果解析成功并包含响应字段
+              if (parsedContent && parsedContent.response) {
+                processedContent = typeof parsedContent.response === 'string' ? 
+                  parsedContent.response : 
+                  JSON.stringify(parsedContent.response);
+              }
+            } catch (e) {
+              console.log('历史消息内容不是JSON格式，使用原始字符串');
+              // 保持原始内容
+            }
+          }
+          // 如果是对象，提取response或content字段
+          else if (typeof processedContent === 'object' && processedContent !== null) {
+            if (processedContent.response) {
+              processedContent = typeof processedContent.response === 'string' ? 
+                processedContent.response : 
+                JSON.stringify(processedContent.response);
+            } else if (processedContent.content) {
+              processedContent = typeof processedContent.content === 'string' ? 
+                processedContent.content : 
+                JSON.stringify(processedContent.content);
+            } else {
+              processedContent = JSON.stringify(processedContent);
+            }
+          }
+          
+          return createHistoricalMessage(
+            msg.role || SenderRole.USER,
+            processedContent,
+            msg.content_type || msg.type || MessageType.TEXT,
+            { id: msg.id || `msg-${Date.now()}-${Math.random()}`, metadata: msg.metadata || {}, visible: true },
+            msg.timestamp || msg.created_at || new Date().toISOString()
+          );
+        });
+        
+        // 检查是否已经有欢迎消息
+        const hasWelcomeMessage = processedMessages.some(msg => 
+          msg.role === SenderRole.ASSISTANT && 
+          msg.content && 
+          typeof msg.content === 'string' &&
+          msg.content.includes('你好！我是彩虹城AI')
         );
-      });
-      
-      // 检查是否已经有欢迎消息
-      const hasWelcomeMessage = processedMessages.some(msg => 
-        msg.role === SenderRole.ASSISTANT && 
-        msg.content && 
-        typeof msg.content === 'string' &&
-        msg.content.includes('你好！我是彩虹城AI')
-      );
       
       // 如果没有欢迎消息，添加一个欢迎消息，并设置极早的时间戳
       if (!hasWelcomeMessage && processedMessages.length > 0) {
@@ -676,7 +743,8 @@ function AiChat() {
         const welcomeTimestamp = new Date(earliestTimestamp - 86400000).toISOString(); // 减去24小时
         console.log('欢迎消息时间戳:', welcomeTimestamp, '最早消息时间戳:', new Date(earliestTimestamp).toISOString());
         
-        const welcomeMessage = createMessage(
+        // 使用createHistoricalMessage确保欢迎消息不会触发打字机效果
+        const welcomeMessage = createHistoricalMessage(
           SenderRole.ASSISTANT,
           '你好！我是彩虹城AI，有什么我可以帮你的吗？',
           MessageType.TEXT,
@@ -692,14 +760,16 @@ function AiChat() {
       
       // 如果没有消息，添加一个默认的欢迎消息
       if (processedMessages.length === 0) {
-        processedMessages.push({
-          id: `welcome-${Date.now()}`,
-          role: SenderRole.ASSISTANT,
-          content: '你好！我是彩虹城AI，有什么我可以帮你的吗？',
-          type: MessageType.TEXT,
-          timestamp: new Date().toISOString(),
-          visible: true
-        });
+        processedMessages.push(createHistoricalMessage(
+          SenderRole.ASSISTANT,
+          '你好！我是彩虹城AI，有什么我可以帮你的吗？',
+          MessageType.TEXT,
+          {
+            id: `welcome-${Date.now()}`,
+            visible: true
+          },
+          new Date().toISOString()
+        ));
       }
       
       // 打印排序前后的消息顺序，便于调试
@@ -711,17 +781,21 @@ function AiChat() {
       setMessages(sortedMessages);
       } else {
         console.warn('对话消息数据格式不正确:', data);
-        // 设置一个默认消息
-        setMessages([
+        // 设置一个默认消息，不触发打字机效果
+        const defaultMessage = createMessage(
+          SenderRole.ASSISTANT,
+          '你好！我是彩虹城AI，有什么我可以帮你的吗？',
+          MessageType.TEXT,
           {
             id: `system-${Date.now()}`,
-            role: SenderRole.ASSISTANT,
-            content: '你好！我是彩虹城AI，有什么我可以帮你的吗？',
-            type: MessageType.TEXT,
-            timestamp: new Date().toISOString(),
             visible: true
-          }
-        ]);
+          },
+          new Date().toISOString()
+        );
+        // 默认消息不需要打字机效果
+        // 使用新的打字机状态管理方式，不需要设置isTyping和displayedContent
+        
+        setMessages([defaultMessage]);
       }
     } catch (error) {
       console.error('选择对话失败:', error);
@@ -781,6 +855,8 @@ function AiChat() {
   
   // 保存对话到后端
   const saveConversation = async (messageList, conversationId = null) => {
+    // 创建消息的深拷贝，以便我们可以修改它们而不影响原始消息
+    const messageListCopy = JSON.parse(JSON.stringify(messageList));
     try {
       const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://localhost:5001/api';
       const token = localStorage.getItem('token');
@@ -792,7 +868,7 @@ function AiChat() {
       }
       
       // 准备要保存的消息数据
-      const messagesToSave = messageList.filter(msg => 
+    const messagesToSave = messageListCopy.filter(msg => 
         msg.role !== SenderRole.SYSTEM && msg.visible !== false
       ).map(msg => {
         // 确保content是字符串类型
@@ -890,7 +966,7 @@ function AiChat() {
             id: data.chat.id,
             title: data.chat.title || `对话 ${new Date().toLocaleString('zh-CN')}`,
             preview: messagesToSave.length > 0 ? 
-              (messagesToSave[0].content.substring(0, 30) + '...') : 
+              (typeof messagesToSave[0].content === 'string' ? messagesToSave[0].content.substring(0, 30) + '...' : JSON.stringify(messagesToSave[0].content).substring(0, 30) + '...') : 
               '新对话',
             lastUpdated: new Date().toISOString(),
             messages: sortMessagesByTimestamp(messageList) // 确保消息按时间戳排序
@@ -920,7 +996,7 @@ function AiChat() {
             if (conv.id === conversationId) {
               // 更新对话预览和时间
               const updates = {
-                preview: latestMessage.content.substring(0, 30) + '...',
+                preview: typeof latestMessage.content === 'string' ? latestMessage.content.substring(0, 30) + '...' : JSON.stringify(latestMessage.content).substring(0, 30) + '...',
                 lastUpdated: new Date().toISOString(),
                 messages: sortMessagesByTimestamp(messageList) // 确保消息按时间戳排序
               };
@@ -1031,7 +1107,7 @@ function AiChat() {
       const tempConversation = {
         id: sessionId, // 使用当前会话ID
         title: generateConversationTitle(sortMessagesByTimestamp([...messages, ...userMessages])),
-        preview: messageContent.substring(0, 30) + (messageContent.length > 30 ? '...' : ''),
+        preview: typeof messageContent === 'string' ? messageContent.substring(0, 30) + (messageContent.length > 30 ? '...' : '') : JSON.stringify(messageContent).substring(0, 30) + '...',
         lastUpdated: new Date().toISOString(),
         messages: []
       };
@@ -1250,42 +1326,100 @@ function AiChat() {
         }
         
         // 创建助手消息
-        // 检查响应是否是字符串形式的JSON
-        let responseContent = data.response;
+        // 处理响应数据，确保我们得到纯文本内容
+        let responseContent = '';
         let responseType = MessageType.TEXT;
         let responseMetadata = {};
         
-        // 如果是字符串形式的JSON，尝试解析
+        console.log('原始响应数据类型:', typeof data.response);
+        console.log('原始响应数据:', data.response);
+        
+        // 处理字符串响应
         if (typeof data.response === 'string') {
           try {
             // 尝试解析JSON字符串
             const parsedResponse = JSON.parse(data.response);
             console.log('解析响应字符串成功:', parsedResponse);
             
-            // 如果解析成功并包含响应字段，使用它
+            // 如果解析成功并包含响应字段
             if (parsedResponse && parsedResponse.response) {
-              responseContent = parsedResponse.response;
+              responseContent = typeof parsedResponse.response === 'string' ? 
+                parsedResponse.response : 
+                JSON.stringify(parsedResponse.response);
+            } else {
+              // 如果没有response字段，使用整个解析后的对象
+              responseContent = JSON.stringify(parsedResponse);
             }
           } catch (e) {
             // 如果不是JSON，直接使用原始字符串
             console.log('响应不是JSON格式，使用原始字符串');
+            responseContent = data.response;
           }
-        } else if (typeof data.response === 'object') {
-          // 如果是对象，使用content字段或整个对象
-          responseContent = data.response.content || JSON.stringify(data.response);
+        } 
+        // 处理对象响应
+        else if (typeof data.response === 'object') {
+          console.log('响应是对象类型:', data.response);
+          
+          // 如果对象有response字段
+          if (data.response.response) {
+            responseContent = typeof data.response.response === 'string' ? 
+              data.response.response : 
+              JSON.stringify(data.response.response);
+          }
+          // 如果对象有content字段
+          else if (data.response.content) {
+            responseContent = typeof data.response.content === 'string' ? 
+              data.response.content : 
+              JSON.stringify(data.response.content);
+          } 
+          // 如果都没有，将整个对象转换为字符串
+          else {
+            responseContent = JSON.stringify(data.response);
+          }
+          
+          // 获取其他元数据
           responseType = data.response.type || MessageType.TEXT;
           responseMetadata = data.response.metadata || {};
         }
         
+        console.log('处理后的响应内容:', responseContent);
+        
+        // 创建助手消息
         const assistantMessage = {
-          ...createMessage(
-            SenderRole.ASSISTANT, 
-            responseContent,
-            responseType,
-            responseMetadata
-          ),
-          visible: true // 确保消息可见
+          id: generateUUID(),
+          role: SenderRole.ASSISTANT,
+          content: responseContent,
+          type: responseType,
+          timestamp: new Date().toISOString(),
+          visible: true,             // 确保消息可见
+          ...responseMetadata
         };
+        
+        // 将新消息添加到打字机状态中
+        setTypingState(prev => ({
+          ...prev,
+          [assistantMessage.id]: {
+            isTyping: true,
+            displayedContent: '',
+            fullContent: typeof responseContent === 'string' ? 
+              responseContent : 
+              JSON.stringify(responseContent)
+          }
+        }));
+        
+        console.log('创建的AI消息已添加到打字机状态:', {
+          id: assistantMessage.id,
+          content: typeof responseContent === 'string' ? 
+            responseContent.substring(0, 20) + '...' : 
+            'non-string content'
+        });
+        
+        console.log('创建的AI消息状态:', {
+          id: assistantMessage.id,
+          isTyping: assistantMessage.isTyping,
+          displayedContent: assistantMessage.displayedContent ? '空' : '空字符串',
+          contentLength: assistantMessage.content ? assistantMessage.content.length : 0
+        });
         
         // 重置加载状态
         setIsLoading(false);
@@ -1300,20 +1434,31 @@ function AiChat() {
           })));
           
           // 添加工具调用消息
-          const toolMessage = {
-            ...createMessage(
-              SenderRole.SYSTEM,
-              `正在使用工具: ${data.tool_calls.map(t => t.name).join(', ')}`,
-              MessageType.TOOL_OUTPUT,
-              { tool_calls: data.tool_calls }
-            ),
-            visible: true // 确保消息可见
-          };
+          const toolMessage = createMessage(
+            SenderRole.SYSTEM,
+            `正在使用工具: ${data.tool_calls.map(t => t.name).join(', ')}`,
+            MessageType.TOOL_OUTPUT,
+            { 
+              tool_calls: data.tool_calls,
+              visible: true // 确保消息可见
+            }
+          );
+          
+          // 系统消息不需要打字机效果
+          // 使用新的打字机状态管理方式，不需要设置isTyping和displayedContent
           
           // 使用回调函数形式更新消息，确保基于最新的状态
           setMessages(prevMessages => {
-            // 添加新消息并按时间戳排序
-            const updatedMessages = sortMessagesByTimestamp([...prevMessages, assistantMessage, toolMessage]);
+            // 添加新消息，不使用排序以避免状态丢失
+            const updatedMessages = [...prevMessages, assistantMessage, toolMessage];
+              
+            // 打印添加消息后的状态
+            console.log('添加AI消息后状态:', updatedMessages.filter(m => m.id === assistantMessage.id).map(m => ({
+              id: m.id.substring(0, 6),
+              isTyping: m.isTyping,
+              displayedContent: m.displayedContent === '' ? '空字符串' : m.displayedContent,
+              contentLength: m.content ? m.content.length : 0
+            })));
             
             // 如果用户已登录，自动保存对话
             if (isLoggedIn) {
@@ -1335,8 +1480,16 @@ function AiChat() {
         } else {
           // 使用回调函数形式更新消息，确保基于最新的状态
           setMessages(prevMessages => {
-            // 添加新消息并按时间戳排序
-            const updatedMessages = sortMessagesByTimestamp([...prevMessages, assistantMessage]);
+            // 添加新消息，不使用排序以避免状态丢失
+            const updatedMessages = [...prevMessages, assistantMessage];
+              
+            // 打印添加消息后的状态
+            console.log('添加AI消息后状态:', updatedMessages.filter(m => m.id === assistantMessage.id).map(m => ({
+              id: m.id.substring(0, 6),
+              isTyping: m.isTyping,
+              displayedContent: m.displayedContent === '' ? '空字符串' : m.displayedContent,
+              contentLength: m.content ? m.content.length : 0
+            })));
             
             // 如果用户已登录，自动保存对话
             if (isLoggedIn) {
@@ -1405,55 +1558,102 @@ function AiChat() {
   
   // 渲染消息内容
   const renderMessageContent = (message) => {
-    // 准备要显示的内容，如果在打字中则使用displayedContent
-    let contentToShow = message.isTyping ? message.displayedContent : message.content;
+    // 检查消息是否在打字机状态中
+    const messageTypingState = typingState[message.id];
+    const isTypingMessage = messageTypingState && messageTypingState.isTyping;
     
-    // 确保contentToShow是字符串类型，防止charAt错误
+    // 调试：打印消息渲染状态
+    if (message.role === SenderRole.ASSISTANT) {
+      console.log('渲染AI消息:', {
+        id: message.id.substring(0, 6),
+        hasTypingState: !!messageTypingState,
+        isTyping: isTypingMessage,
+        content: message.content ? (typeof message.content === 'string' ? message.content.substring(0, 20) + '...' : 'non-string') : 'empty',
+        displayedContent: messageTypingState ? messageTypingState.displayedContent.substring(0, 20) + '...' : 'no typing state'
+      });
+    }
+    
+    // 准备要显示的内容，如果在打字中则使用typingState中的displayedContent
+    let contentToShow;
+    
+    // 如果消息在打字中，使用打字机状态中的内容
+    if (isTypingMessage) {
+      contentToShow = messageTypingState.displayedContent;
+    } 
+    // 否则使用消息的完整内容
+    else {
+      contentToShow = message.content;
+    }
+    
+    // 处理内容，确保最终显示的是字符串
+    // 处理null或undefined
     if (contentToShow === null || contentToShow === undefined) {
       contentToShow = '';
-    } else if (typeof contentToShow === 'object') {
-      // 如果是对象类型，先检查是否有response字段
+    }
+    // 处理对象类型
+    else if (typeof contentToShow === 'object') {
+      console.log('处理对象类型的消息:', contentToShow);
+      
+      // 先检查常见的字段
       if (contentToShow.response) {
-        contentToShow = typeof contentToShow.response === 'string' ? 
-          contentToShow.response : 
-          (contentToShow.response.content || JSON.stringify(contentToShow.response));
+        if (typeof contentToShow.response === 'string') {
+          contentToShow = contentToShow.response;
+        } else if (typeof contentToShow.response === 'object' && contentToShow.response.content) {
+          contentToShow = typeof contentToShow.response.content === 'string' ?
+            contentToShow.response.content : JSON.stringify(contentToShow.response.content);
+        } else {
+          contentToShow = JSON.stringify(contentToShow.response);
+        }
       } else if (contentToShow.content) {
-        contentToShow = contentToShow.content;
+        contentToShow = typeof contentToShow.content === 'string' ?
+          contentToShow.content : JSON.stringify(contentToShow.content);
       } else {
         // 如果没有这些字段，尝试转换为JSON字符串
         try {
-          contentToShow = JSON.stringify(contentToShow);
+          contentToShow = JSON.stringify(contentToShow, null, 2);
         } catch (e) {
           contentToShow = '[无法显示的内容类型]';
         }
       }
-    } else if (typeof contentToShow === 'string') {
-      // 如果是字符串，检查是否是JSON字符串
+    }
+    // 处理字符串类型，检查是否是JSON字符串
+    else if (typeof contentToShow === 'string') {
       if ((contentToShow.startsWith('{') && contentToShow.endsWith('}')) || 
           (contentToShow.startsWith('[') && contentToShow.endsWith(']'))) {
         try {
-          // 尝试解析JSON字符串
           const parsedContent = JSON.parse(contentToShow);
           console.log('解析消息内容成功:', parsedContent);
           
-          // 如果解析成功并包含响应字段，使用它
+          // 处理各种可能的字段
           if (parsedContent && parsedContent.response) {
             if (typeof parsedContent.response === 'string') {
               contentToShow = parsedContent.response;
             } else if (typeof parsedContent.response === 'object') {
-              contentToShow = parsedContent.response.content || JSON.stringify(parsedContent.response);
+              if (parsedContent.response.content) {
+                contentToShow = typeof parsedContent.response.content === 'string' ?
+                  parsedContent.response.content :
+                  JSON.stringify(parsedContent.response.content);
+              } else {
+                contentToShow = JSON.stringify(parsedContent.response);
+              }
             }
           } else if (parsedContent && parsedContent.content) {
-            contentToShow = parsedContent.content;
+            contentToShow = typeof parsedContent.content === 'string' ?
+              parsedContent.content :
+              JSON.stringify(parsedContent.content);
           }
+          // 如果没有这些字段，保持原始字符串
         } catch (e) {
-          console.log('消息内容解析失败:', e);
-          // 如果解析失败，保留原始字符串
+          // 如果解析失败，使用原始字符串
+          console.log('消息内容不是JSON格式或解析失败:', e);
         }
       }
     }
+    // 其他类型转换为字符串
+    else {
+      contentToShow = String(contentToShow);
+    }
     
-    // 根据消息类型渲染不同的内容
     switch (message.type) {
       case MessageType.MIXED:
         // 混合消息（文本+图片）

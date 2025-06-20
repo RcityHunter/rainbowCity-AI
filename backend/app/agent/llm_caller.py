@@ -98,6 +98,11 @@ class OpenAILLMCaller(LLMCaller):
                 "max_tokens": max_tokens,
             }
             
+            # 检查模型是否支持 tools 参数
+            # 只有特定模型支持 tools 参数，如 gpt-4-turbo, gpt-4o 等
+            tools_supported_models = ["gpt-4-turbo", "gpt-4o", "gpt-4-vision", "gpt-4-1106-preview", "gpt-4-0125-preview"]
+            tools_supported = any(model in self.model_name for model in tools_supported_models)
+            
             # 检查是否有图片输入，如果有，设置特定参数
             has_image = False
             for message in messages:
@@ -117,11 +122,13 @@ class OpenAILLMCaller(LLMCaller):
                     request_params["model"] = self.model_name
                     logging.info(f"检测到图片输入，切换到模型: {self.model_name}")
             
-            # 如果提供了工具定义，添加到请求中
-            if tools:
+            # 如果提供了工具定义，且模型支持工具，添加到请求中
+            if tools and tools_supported:
                 logging.info(f"添加工具定义到请求，工具数量: {len(tools)}")
                 request_params["tools"] = tools
                 request_params["tool_choice"] = "auto"
+            elif tools and not tools_supported:
+                logging.warning(f"模型 {self.model_name} 不支持 tools 参数，已自动忽略工具定义")
             
             # 异步调用API
             # 使用正确的OpenAI API v1.0.0格式

@@ -575,30 +575,95 @@ async def get_chat_messages(
         chat_id_with_prefix = ensure_chat_id_format(chat_id)
         logging.info(f"查询消息，chat_id: {chat_id_with_prefix}")
         
-        # 执行直接ID查询，检查是否有消息
-        try:
-            direct_query_result = await execute_raw_query(f"SELECT * FROM message WHERE chat_id = '{chat_id_with_prefix}'")
-            logging.info(f"直接查询结果: {direct_query_result}")
-            logging.info(f"直接查询结果类型: {type(direct_query_result)}")
-        except Exception as e:
-            logging.error(f"直接查询出错: {str(e)}")
-            direct_query_result = None
-        
-        # 使用标准查询方法
+        # 先从 message 表查询
         all_messages = await query('message', {'chat_id': chat_id_with_prefix})
-        logging.info(f"查询消息结果: {all_messages}")
-        logging.info(f"查询消息结果类型: {type(all_messages)}")
+        logging.info(f"message表查询结果: {all_messages}")
+        logging.info(f"message表查询结果类型: {type(all_messages)}")
+        
+        # 如果在message表中没有找到，尝试从 chat_messages 表查询
+        if not all_messages or len(all_messages) == 0:
+            logging.info(f"在message表中没有找到消息，尝试从 chat_messages 表查询")
+            try:
+                chat_messages = await query('chat_messages', {'session_id': chat_id_with_prefix})
+                logging.info(f"chat_messages表查询结果: {chat_messages}")
+                
+                # 如果在chat_messages表中找到了消息，将其转换为message表的格式
+                if chat_messages and len(chat_messages) > 0:
+                    all_messages = []
+                    for msg in chat_messages:
+                        # 转换格式
+                        converted_msg = {
+                            'id': msg.get('id', f"msg_{int(time.time())}_{id(msg)}"),
+                            'chat_id': chat_id_with_prefix,
+                            'role': msg.get('role', 'unknown'),
+                            'content': msg.get('content', ''),
+                            'timestamp': msg.get('created_at', datetime.now().isoformat())
+                        }
+                        # 添加可选字段
+                        if 'metadata' in msg:
+                            converted_msg['metadata'] = msg['metadata']
+                        if 'token_count' in msg:
+                            converted_msg['token_count'] = msg['token_count']
+                        
+                        all_messages.append(converted_msg)
+                    
+                    logging.info(f"从 chat_messages 表转换了 {len(all_messages)} 条消息")
+            except Exception as e:
+                logging.error(f"查询 chat_messages 表出错: {str(e)}")
+        
+        # 如果仍然没有找到消息，尝试使用原始 SQL 查询
+        if not all_messages or len(all_messages) == 0:
+            try:
+                from app.db import execute_raw_query
+                logging.info(f"尝试使用原始 SQL 查询消息")
+                # 先查询 message 表
+                message_query_result = await execute_raw_query(f"SELECT * FROM message WHERE chat_id = '{chat_id_with_prefix}'")
+                logging.info(f"message表原始查询结果: {message_query_result}")
+                
+                # 如果没有结果，查询 chat_messages 表
+                if not message_query_result or len(message_query_result) == 0:
+                    chat_messages_query_result = await execute_raw_query(f"SELECT * FROM chat_messages WHERE session_id = '{chat_id_with_prefix}'")
+                    logging.info(f"chat_messages表原始查询结果: {chat_messages_query_result}")
+                    
+                    # 如果在chat_messages表中找到了消息，将其转换为message表的格式
+                    if chat_messages_query_result and len(chat_messages_query_result) > 0:
+                        all_messages = []
+                        for msg in chat_messages_query_result:
+                            # 转换格式
+                            converted_msg = {
+                                'id': msg.get('id', f"msg_{int(time.time())}_{id(msg)}"),
+                                'chat_id': chat_id_with_prefix,
+                                'role': msg.get('role', 'unknown'),
+                                'content': msg.get('content', ''),
+                                'timestamp': msg.get('created_at', datetime.now().isoformat())
+                            }
+                            # 添加可选字段
+                            if 'metadata' in msg:
+                                converted_msg['metadata'] = msg['metadata']
+                            if 'token_count' in msg:
+                                converted_msg['token_count'] = msg['token_count']
+                            
+                            all_messages.append(converted_msg)
+                else:
+                    all_messages = message_query_result
+            except Exception as e:
+                logging.error(f"原始 SQL 查询出错: {str(e)}")
         
         total = len(all_messages) if all_messages else 0
         logging.info(f"消息总数: {total}")
         
-        # 如果没有消息，尝试查询所有消息表中的数据
+        # 如果仍然没有消息，记录详细日志
         if total == 0:
+            logging.warning(f"没有找到任何消息，尝试查询数据库中的所有消息表")
             try:
-                all_table_messages = await execute_raw_query("SELECT * FROM message LIMIT 10")
-                logging.info(f"消息表中的数据: {all_table_messages}")
+                from app.db import execute_raw_query
+                message_sample = await execute_raw_query("SELECT * FROM message LIMIT 10")
+                chat_messages_sample = await execute_raw_query("SELECT * FROM chat_messages LIMIT 10")
+                logging.info(f"message表样本数据: {message_sample}")
+                logging.info(f"chat_messages表样本数据: {chat_messages_sample}")
             except Exception as e:
-                logging.error(f"查询所有消息出错: {str(e)}")
+                logging.error(f"查询样本数据出错: {str(e)}")
+
         
         
         # 计算分页
@@ -729,20 +794,19 @@ async def add_chat_message(
                 
                 # 使用异步版本的update函数
                 await update('chat', chat_id_for_query, update_data)  # 使用正确格式的chat_id
+                
+                # 成功后返回结果
+                return {
+                    'status': 'Message added successfully',
+                    'message_id': message_id,
+                    'message': result[0] if isinstance(result, list) else result
+                }
             else:
                 logging.error(f"消息创建结果为空或无效: {result}")
                 raise HTTPException(status_code=500, detail="添加消息失败，服务器返回空结果")
         except Exception as e:
             logging.error(f"创建消息时出错: {str(e)}")
             raise HTTPException(status_code=500, detail=f"添加消息失败: {str(e)}")
-            
-            return {
-                'message': 'Message added successfully',
-                'message_id': message_id,
-                'message': result[0]
-            }
-        else:
-            raise HTTPException(status_code=500, detail="添加消息失败")
             
     except HTTPException:
         raise
