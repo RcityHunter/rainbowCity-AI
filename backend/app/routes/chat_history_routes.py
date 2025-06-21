@@ -691,6 +691,29 @@ async def get_chat_messages(
                     msg['role'] = 'unknown'
                 if 'content' not in msg:
                     msg['content'] = ''
+                    
+                # 确保content字段是字符串类型
+                if not isinstance(msg['content'], str):
+                    try:
+                        # 如果是字典类型，尝试提取response字段或转换为JSON字符串
+                        if isinstance(msg['content'], dict):
+                            if 'response' in msg['content']:
+                                msg['content'] = str(msg['content']['response'])
+                            else:
+                                msg['content'] = json.dumps(msg['content'])
+                        else:
+                            # 其他类型直接转换为字符串
+                            msg['content'] = str(msg['content'])
+                    except Exception as e:
+                        logging.error(f"转换消息内容为字符串时出错: {str(e)}")
+                        msg['content'] = ''
+                        
+                # 记录处理后的消息内容类型
+                logging.info(f"消息 {msg['id']} 内容类型: {type(msg['content'])}")
+                if not isinstance(msg['content'], str):
+                    logging.error(f"消息 {msg['id']} 内容仍然不是字符串类型: {type(msg['content'])}")
+                    # 强制转换为字符串
+                    msg['content'] = ''
         else:
             messages = []
         

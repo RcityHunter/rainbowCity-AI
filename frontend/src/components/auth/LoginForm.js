@@ -1,5 +1,6 @@
-import React, { useState } from 'react';
-import { login } from '../../services/auth_service';
+import React, { useState, useEffect } from 'react';
+import { login, handleGoogleCallback, handleGithubCallback } from '../../services/auth_service';
+import SocialLoginButtons from './SocialLoginButtons';
 import './AuthForms.css';
 
 const LoginForm = ({ onLoginSuccess, onSwitchToSignup }) => {
@@ -7,6 +8,42 @@ const LoginForm = ({ onLoginSuccess, onSwitchToSignup }) => {
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
+  
+  // 处理OAuth回调
+  useEffect(() => {
+    const urlParams = new URLSearchParams(window.location.search);
+    const code = urlParams.get('code');
+    const provider = urlParams.get('provider');
+    
+    if (code && provider) {
+      const handleOAuthCallback = async () => {
+        setLoading(true);
+        setError(null);
+        
+        try {
+          let data;
+          if (provider === 'google') {
+            data = await handleGoogleCallback(code);
+          } else if (provider === 'github') {
+            data = await handleGithubCallback(code);
+          }
+          
+          setLoading(false);
+          if (onLoginSuccess && data?.user) {
+            onLoginSuccess(data.user);
+          }
+          
+          // 清除URL中的查询参数
+          window.history.replaceState({}, document.title, window.location.pathname);
+        } catch (err) {
+          setLoading(false);
+          setError(typeof err === 'string' ? err : '第三方登录失败，请稍后再试');
+        }
+      };
+      
+      handleOAuthCallback();
+    }
+  }, [onLoginSuccess]);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -56,6 +93,8 @@ const LoginForm = ({ onLoginSuccess, onSwitchToSignup }) => {
           {loading ? '登录中...' : '登录'}
         </button>
       </form>
+      <SocialLoginButtons />
+      
       <div className="auth-links">
         <p>
           还没有账号？{' '}

@@ -1,0 +1,95 @@
+.social-login-container {
+  margin: 20px 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.social-login-divider {
+  position: relative;
+  width: 100%;
+  text-align: center;
+  margin: 15px 0;
+}
+
+.social-login-divider::before,
+.social-login-divider::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  width: 40%;
+  height: 1px;
+  background-color: rgba(255, 255, 255, 0.2);
+}
+
+.social-login-divider::before {
+  left: 0;
+}
+
+.social-login-divider::after {
+  right: 0;
+}
+
+.social-login-divider-text {
+  display: inline-block;
+  background-color: var(--auth-bg-color, #121212);
+  padding: 0 10px;
+  color: rgba(255, 255, 255, 0.6);
+  font-size: 0.9rem;
+}
+
+.social-login-buttons {
+  display: flex;
+  justify-content: center;
+  gap: 20px;
+  width: 100%;
+  margin-top: 10px;
+}
+
+.social-login-button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 10px 20px;
+  border-radius: 4px;
+  border: none;
+  cursor: pointer;
+  font-weight: 500;
+  transition: all 0.3s ease;
+  width: 130px;
+  color: #fff;
+}
+
+.social-login-button svg {
+  margin-right: 8px;
+  font-size: 18px;
+}
+
+.google-login-button {
+  background-color: #4285F4;
+}
+
+.google-login-button:hover {
+  background-color: #357ae8;
+}
+
+.github-login-button {
+  background-color: #333;
+}
+
+.github-login-button:hover {
+  background-color: #24292e;
+}
+
+/* 响应式样式 */
+@media (max-width: 480px) {
+  .social-login-buttons {
+    flex-direction: column;
+    gap: 10px;
+    align-items: center;
+  }
+  
+  .social-login-button {
+    width: 80%;
+  }
+}

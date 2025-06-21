@@ -232,9 +232,7 @@ function AiChat() {
           [message.id]: {
             isTyping: true,
             displayedContent: '',
-            fullContent: typeof message.content === 'string' ? 
-              message.content : 
-              JSON.stringify(message.content)
+            fullContent: extractResponseContent(message.content)
           }
         }));
       }
@@ -1095,8 +1093,20 @@ function AiChat() {
       }
     }
     
-    // 添加用户消息到状态并按时间戳排序
-    setMessages(prev => sortMessagesByTimestamp([...prev, ...userMessages]));
+    // 确保每条消息都有时间戳
+    const messagesWithTimestamp = userMessages.map(msg => {
+      if (!msg.timestamp) {
+        return {
+          ...msg,
+          timestamp: new Date().toISOString()
+        };
+      }
+      return msg;
+    });
+    
+    // 添加到消息列表并排序
+    setMessages(prev => sortMessagesByTimestamp([...prev, ...messagesWithTimestamp]));
+    console.log('添加用户消息后的消息列表:', messagesWithTimestamp);
     setTextInput('');
     setAttachments([]);
     setIsLoading(true);
@@ -1121,11 +1131,10 @@ function AiChat() {
       // 准备请求数据
       // 使用函数形式获取最新的messages状态
       let allMessages = [];
-      setMessages(prevMessages => {
-        allMessages = [...prevMessages];
-        // 确保消息按时间戳排序
-        return sortMessagesByTimestamp(prevMessages);
-      });
+      // 深拷贝当前消息列表，避免引用问题
+      allMessages = JSON.parse(JSON.stringify(messages));
+      // 确保消息按时间戳排序
+      allMessages = sortMessagesByTimestamp(allMessages);
       
       // 限制发送给后端的消息历史数量，只发送最近的消息和系统消息
       const visibleMessages = allMessages
@@ -1557,7 +1566,82 @@ function AiChat() {
   };
   
   // 渲染消息内容
-  const renderMessageContent = (message) => {
+  // 提取消息内容中的response字段
+const extractResponseContent = (content) => {
+  // 处理null或undefined
+  if (content === null || content === undefined) {
+    return '';
+  }
+  
+  // 处理对象类型
+  if (typeof content === 'object') {
+    console.log('处理对象类型的消息:', content);
+    
+    // 先检查response字段
+    if (content.response) {
+      if (typeof content.response === 'string') {
+        return content.response;
+      } else if (typeof content.response === 'object' && content.response.content) {
+        return typeof content.response.content === 'string' ?
+          content.response.content : JSON.stringify(content.response.content);
+      } else {
+        return JSON.stringify(content.response);
+      }
+    } else if (content.content) {
+      return typeof content.content === 'string' ?
+        content.content : JSON.stringify(content.content);
+    } else {
+      // 如果没有这些字段，尝试转换为JSON字符串
+      try {
+        return JSON.stringify(content, null, 2);
+      } catch (e) {
+        return '[无法显示的内容类型]';
+      }
+    }
+  }
+  
+  // 处理字符串类型，检查是否是JSON字符串
+  if (typeof content === 'string') {
+    if ((content.startsWith('{') && content.endsWith('}')) || 
+        (content.startsWith('[') && content.endsWith(']'))) {
+      try {
+        const parsedContent = JSON.parse(content);
+        console.log('解析消息内容成功:', parsedContent);
+        
+        // 处理各种可能的字段
+        if (parsedContent && parsedContent.response) {
+          if (typeof parsedContent.response === 'string') {
+            return parsedContent.response;
+          } else if (typeof parsedContent.response === 'object') {
+            if (parsedContent.response.content) {
+              return typeof parsedContent.response.content === 'string' ?
+                parsedContent.response.content :
+                JSON.stringify(parsedContent.response.content);
+            } else {
+              return JSON.stringify(parsedContent.response);
+            }
+          }
+        } else if (parsedContent && parsedContent.content) {
+          return typeof parsedContent.content === 'string' ?
+            parsedContent.content :
+            JSON.stringify(parsedContent.content);
+        }
+        // 如果没有这些字段，保持原始字符串
+        return content;
+      } catch (e) {
+        // 如果解析失败，使用原始字符串
+        console.log('消息内容不是JSON格式或解析失败:', e);
+        return content;
+      }
+    }
+    return content;
+  }
+  
+  // 其他类型转换为字符串
+  return String(content);
+};
+
+const renderMessageContent = (message) => {
     // 检查消息是否在打字机状态中
     const messageTypingState = typingState[message.id];
     const isTypingMessage = messageTypingState && messageTypingState.isTyping;
@@ -1574,84 +1658,27 @@ function AiChat() {
     }
     
     // 准备要显示的内容，如果在打字中则使用typingState中的displayedContent
-    let contentToShow;
+    let contentToShow = '';
     
-    // 如果消息在打字中，使用打字机状态中的内容
-    if (isTypingMessage) {
-      contentToShow = messageTypingState.displayedContent;
-    } 
-    // 否则使用消息的完整内容
-    else {
-      contentToShow = message.content;
-    }
-    
-    // 处理内容，确保最终显示的是字符串
-    // 处理null或undefined
-    if (contentToShow === null || contentToShow === undefined) {
-      contentToShow = '';
-    }
-    // 处理对象类型
-    else if (typeof contentToShow === 'object') {
-      console.log('处理对象类型的消息:', contentToShow);
+    try {
+      // 如果消息在打字中，使用打字机状态中的内容
+      if (isTypingMessage && messageTypingState && messageTypingState.displayedContent) {
+        contentToShow = messageTypingState.displayedContent;
+      } 
+      // 否则使用消息的完整内容，并提取response字段
+      else if (message && message.content) {
+        contentToShow = extractResponseContent(message.content);
+      }
       
-      // 先检查常见的字段
-      if (contentToShow.response) {
-        if (typeof contentToShow.response === 'string') {
-          contentToShow = contentToShow.response;
-        } else if (typeof contentToShow.response === 'object' && contentToShow.response.content) {
-          contentToShow = typeof contentToShow.response.content === 'string' ?
-            contentToShow.response.content : JSON.stringify(contentToShow.response.content);
-        } else {
-          contentToShow = JSON.stringify(contentToShow.response);
-        }
-      } else if (contentToShow.content) {
-        contentToShow = typeof contentToShow.content === 'string' ?
-          contentToShow.content : JSON.stringify(contentToShow.content);
-      } else {
-        // 如果没有这些字段，尝试转换为JSON字符串
-        try {
-          contentToShow = JSON.stringify(contentToShow, null, 2);
-        } catch (e) {
-          contentToShow = '[无法显示的内容类型]';
-        }
+      // 确保contentToShow始终是字符串
+      if (contentToShow === null || contentToShow === undefined) {
+        contentToShow = '';
+      } else if (typeof contentToShow !== 'string') {
+        contentToShow = String(contentToShow);
       }
-    }
-    // 处理字符串类型，检查是否是JSON字符串
-    else if (typeof contentToShow === 'string') {
-      if ((contentToShow.startsWith('{') && contentToShow.endsWith('}')) || 
-          (contentToShow.startsWith('[') && contentToShow.endsWith(']'))) {
-        try {
-          const parsedContent = JSON.parse(contentToShow);
-          console.log('解析消息内容成功:', parsedContent);
-          
-          // 处理各种可能的字段
-          if (parsedContent && parsedContent.response) {
-            if (typeof parsedContent.response === 'string') {
-              contentToShow = parsedContent.response;
-            } else if (typeof parsedContent.response === 'object') {
-              if (parsedContent.response.content) {
-                contentToShow = typeof parsedContent.response.content === 'string' ?
-                  parsedContent.response.content :
-                  JSON.stringify(parsedContent.response.content);
-              } else {
-                contentToShow = JSON.stringify(parsedContent.response);
-              }
-            }
-          } else if (parsedContent && parsedContent.content) {
-            contentToShow = typeof parsedContent.content === 'string' ?
-              parsedContent.content :
-              JSON.stringify(parsedContent.content);
-          }
-          // 如果没有这些字段，保持原始字符串
-        } catch (e) {
-          // 如果解析失败，使用原始字符串
-          console.log('消息内容不是JSON格式或解析失败:', e);
-        }
-      }
-    }
-    // 其他类型转换为字符串
-    else {
-      contentToShow = String(contentToShow);
+    } catch (error) {
+      console.error('渲染消息内容时出错:', error);
+      contentToShow = '[消息内容渲染错误]';
     }
     
     switch (message.type) {
@@ -1717,9 +1744,25 @@ function AiChat() {
         );
       case MessageType.TEXT:
       default:
+        // 确保文本消息正确渲染，处理换行符
         return (
           <div className="message-content">
-            {contentToShow}
+            {contentToShow && contentToShow.split('\n').map((line, i) => {
+              // 处理长行，确保每一行都能正确换行显示
+              return (
+                <p key={i} style={{ 
+                  margin: '0 0 0.5em 0',
+                  maxWidth: '100%',
+                  overflowWrap: 'break-word',
+                  wordBreak: 'break-word'
+                }}>
+                  {line || ' '}
+                </p>
+              );
+            })}
+            {(!contentToShow || contentToShow.trim() === '') && (
+              <p>[空消息]</p>
+            )}
           </div>
         );
     }
@@ -1852,129 +1895,235 @@ function AiChat() {
             // 创建问答对
             const qaGroups = [];
             
-            // 将用户消息与助手消息匹配成问答对
-            userMessages.forEach((userMsg, index) => {
-              const userTime = new Date(userMsg.timestamp).getTime();
+            // 先将所有消息按时间戳排序
+            const allSortedMessages = [...userMessages, ...assistantMessages].sort((a, b) => {
+              // 安全地解析时间戳
+              let timeA = 0;
+              let timeB = 0;
               
-              // 找到用户消息后的第一条助手消息
-              const nextAssistantMsg = assistantMessages.find(assistantMsg => {
-                const assistantTime = new Date(assistantMsg.timestamp).getTime();
-                return assistantTime > userTime;
-              });
-              
-              // 如果找到了匹配的助手消息，则创建一个问答对
-              if (nextAssistantMsg) {
-                qaGroups.push({ user: userMsg, assistant: nextAssistantMsg });
-                // 从助手消息列表中移除已匹配的消息
-                const index = assistantMessages.indexOf(nextAssistantMsg);
-                if (index > -1) {
-                  assistantMessages.splice(index, 1);
-                }
-              } else {
-                // 如果没有匹配的助手消息，则只显示用户消息
-                qaGroups.push({ user: userMsg });
+              try {
+                timeA = a.timestamp ? new Date(a.timestamp).getTime() : 0;
+                if (isNaN(timeA)) timeA = 0;
+              } catch (e) {
+                console.error('无法解析时间戳A:', a.timestamp, e);
               }
-            });
-            
-            // 处理未匹配的助手消息
-            assistantMessages.forEach(assistantMsg => {
-              qaGroups.push({ assistant: assistantMsg });
-            });
-            
-            // 按时间戳对问答对进行排序
-            qaGroups.sort((a, b) => {
-              const timeA = a.user ? new Date(a.user.timestamp).getTime() : 
-                             a.assistant ? new Date(a.assistant.timestamp).getTime() : 0;
-              const timeB = b.user ? new Date(b.user.timestamp).getTime() : 
-                             b.assistant ? new Date(b.assistant.timestamp).getTime() : 0;
+              
+              try {
+                timeB = b.timestamp ? new Date(b.timestamp).getTime() : 0;
+                if (isNaN(timeB)) timeB = 0;
+              } catch (e) {
+                console.error('无法解析时间戳B:', b.timestamp, e);
+              }
+              
+              // 升序排列，早的在前，晚的在后
               return timeA - timeB;
             });
             
-            // 渲染所有消息，先渲染欢迎消息
-            const allMessages = [];
+            // 调试日志，显示所有消息的时间戳
+            console.log('消息排序后的时间戳:', allSortedMessages.map(m => ({
+              id: m.id,
+              role: m.role,
+              timestamp: m.timestamp,
+              parsed: m.timestamp ? new Date(m.timestamp).toISOString() : 'invalid'
+            })));
             
-            // 添加欢迎消息
-            allMessages.push(
-              <div 
-                key={welcomeMessage.id} 
-                className="message-wrapper assistant-wrapper"
-              >
-                <div className="message assistant">
-                  <div className="message-role">彩虹城AI</div>
-                  {renderMessageContent(welcomeMessage)}
-                </div>
-              </div>
-            );
+            // 创建一个映射来跟踪已使用的消息
+            const usedMessages = new Set();
             
-            // 添加系统消息
-            systemMessages.forEach(sysMsg => {
-              allMessages.push(
-                <div 
-                  key={sysMsg.id} 
-                  className={`message-wrapper system-wrapper`}
-                >
-                  <div className="message system">
-                    <div className="message-role">系统</div>
-                    {renderMessageContent(sysMsg)}
-                  </div>
-                </div>
-              );
-            });
+            // 处理所有消息，尝试匹配问答对
+            for (let i = 0; i < allSortedMessages.length; i++) {
+              const currentMsg = allSortedMessages[i];
+              
+              // 如果消息已经被使用，跳过
+              if (usedMessages.has(currentMsg.id)) continue;
+              
+              // 标记消息为已使用
+              usedMessages.add(currentMsg.id);
+              
+              if (currentMsg.role === SenderRole.USER) {
+                // 如果是用户消息，尝试找到下一条助手消息
+                let foundAssistant = false;
+                
+                // 向前查找下一条助手消息
+                for (let j = i + 1; j < allSortedMessages.length; j++) {
+                  const nextMsg = allSortedMessages[j];
+                  if (nextMsg.role === SenderRole.ASSISTANT && !usedMessages.has(nextMsg.id)) {
+                    // 创建问答对
+                    qaGroups.push({ user: currentMsg, assistant: nextMsg });
+                    usedMessages.add(nextMsg.id);
+                    foundAssistant = true;
+                    break;
+                  }
+                }
+                
+                // 如果没有找到匹配的助手消息
+                if (!foundAssistant) {
+                  qaGroups.push({ user: currentMsg });
+                }
+              } else if (currentMsg.role === SenderRole.ASSISTANT) {
+                // 如果是助手消息，尝试找到前一条用户消息
+                let foundUser = false;
+                
+                // 向后查找前一条用户消息
+                for (let j = i - 1; j >= 0; j--) {
+                  const prevMsg = allSortedMessages[j];
+                  if (prevMsg.role === SenderRole.USER && !usedMessages.has(prevMsg.id)) {
+                    // 创建问答对
+                    qaGroups.push({ user: prevMsg, assistant: currentMsg });
+                    usedMessages.add(prevMsg.id);
+                    foundUser = true;
+                    break;
+                  }
+                }
+                
+                // 如果没有找到匹配的用户消息
+                if (!foundUser) {
+                  qaGroups.push({ assistant: currentMsg });
+                }
+              }
+            }
             
-            // 添加问答对
-            qaGroups.forEach((group, index) => {
-              // 渲染用户消息
-              if (group.user) {
-                allMessages.push(
-                  <div 
-                    key={group.user.id} 
-                    className="message-wrapper user-wrapper"
-                  >
-                    <div className="message user">
-                      <div className="message-role">你</div>
-                      {renderMessageContent(group.user)}
-                    </div>
-                  </div>
-                );
+            // 按时间戳对问答对进行排序
+            qaGroups.sort((a, b) => {
+              // 安全地获取时间戳
+              let timeA = 0;
+              let timeB = 0;
+              
+              try {
+                if (a.user && a.user.timestamp) {
+                  timeA = new Date(a.user.timestamp).getTime();
+                  if (isNaN(timeA)) timeA = 0;
+                } else if (a.assistant && a.assistant.timestamp) {
+                  timeA = new Date(a.assistant.timestamp).getTime();
+                  if (isNaN(timeA)) timeA = 0;
+                }
+              } catch (e) {
+                console.error('无法解析问答对时间戳A:', a, e);
               }
               
-              // 渲染助手消息
-              if (group.assistant) {
-                allMessages.push(
-                  <div 
-                    key={group.assistant.id} 
-                    className="message-wrapper assistant-wrapper"
-                  >
-                    <div className="message assistant">
-                      <div className="message-role">彩虹城AI</div>
-                      {renderMessageContent(group.assistant)}
-                    </div>
-                  </div>
-                );
+              try {
+                if (b.user && b.user.timestamp) {
+                  timeB = new Date(b.user.timestamp).getTime();
+                  if (isNaN(timeB)) timeB = 0;
+                } else if (b.assistant && b.assistant.timestamp) {
+                  timeB = new Date(b.assistant.timestamp).getTime();
+                  if (isNaN(timeB)) timeB = 0;
+                }
+              } catch (e) {
+                console.error('无法解析问答对时间戳B:', b, e);
               }
+              
+              // 升序排列，早的在前，晚的在后
+              return timeA - timeB;
             });
             
-            return allMessages;
-          })()}
-          
-          {isLoading && (
-            <div className="message-wrapper assistant-wrapper">
-              <div className="message assistant">
-                <div className="message-role">
-                  彩虹城AI
-                </div>
-                <div className="thinking">
-                  <div className="thinking-dots">
-                    <span></span>
-                    <span></span>
-                    <span></span>
+            // 调试日志，显示问答对排序结果
+            console.log('问答对排序后:', qaGroups.map(g => ({
+              user: g.user ? { id: g.user.id, timestamp: g.user.timestamp } : null,
+              assistant: g.assistant ? { id: g.assistant.id, timestamp: g.assistant.timestamp } : null
+            })));
+            
+            // 处理重复的问答对
+            const uniqueGroups = [];
+            const seenUserIds = new Set();
+            const seenAssistantIds = new Set();
+            
+            for (const group of qaGroups) {
+              let shouldAdd = true;
+              
+              if (group.user && seenUserIds.has(group.user.id)) {
+                shouldAdd = false;
+              }
+              
+              if (group.assistant && seenAssistantIds.has(group.assistant.id)) {
+                shouldAdd = false;
+              }
+              
+              if (shouldAdd) {
+                if (group.user) seenUserIds.add(group.user.id);
+                if (group.assistant) seenAssistantIds.add(group.assistant.id);
+                uniqueGroups.push(group);
+              }
+            }
+            
+            // 使用去重后的问答对
+            const finalGroups = uniqueGroups;
+            
+            // 再次按时间戳对最终问答对进行排序，确保顺序正确
+            finalGroups.sort((a, b) => {
+              // 安全地获取时间戳
+              let timeA = 0;
+              let timeB = 0;
+              
+              try {
+                if (a.user && a.user.timestamp) {
+                  timeA = new Date(a.user.timestamp).getTime();
+                  if (isNaN(timeA)) timeA = 0;
+                } else if (a.assistant && a.assistant.timestamp) {
+                  timeA = new Date(a.assistant.timestamp).getTime();
+                  if (isNaN(timeA)) timeA = 0;
+                }
+              } catch (e) {
+                console.error('无法解析最终问答对时间戳A:', a, e);
+              }
+              
+              try {
+                if (b.user && b.user.timestamp) {
+                  timeB = new Date(b.user.timestamp).getTime();
+                  if (isNaN(timeB)) timeB = 0;
+                } else if (b.assistant && b.assistant.timestamp) {
+                  timeB = new Date(b.assistant.timestamp).getTime();
+                  if (isNaN(timeB)) timeB = 0;
+                }
+              } catch (e) {
+                console.error('无法解析最终问答对时间戳B:', b, e);
+              }
+              
+              // 升序排列，早的在前，晚的在后
+              return timeA - timeB;
+            });
+            
+            // 渲染消息列表
+            return (
+              <div className="seamless-messages-container">
+                {/* 欢迎消息 */}
+                <div className="message-wrapper assistant-message">
+                  <div className="message">
+                    {renderMessageContent(welcomeMessage)}
                   </div>
                 </div>
+                
+                {/* 渲染问答对 */}
+                {finalGroups.map((group, index) => (
+                  <React.Fragment key={`qa-group-${index}`}>
+                    {group.user && (
+                      <div className="message-wrapper user-message">
+                        <div className="message">
+                          {renderMessageContent(group.user)}
+                        </div>
+                      </div>
+                    )}
+                    {group.assistant && (
+                      <div className="message-wrapper assistant-message">
+                        <div className="message">
+                          {renderMessageContent(group.assistant)}
+                        </div>
+                        {group.assistant.isTyping && (
+                          <div className="thinking">
+                            <div className="thinking-dots">
+                              <span></span>
+                              <span></span>
+                              <span></span>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </React.Fragment>
+                ))}
               </div>
-            </div>
-          )}
-          
-          <div ref={messagesEndRef} />
+            );
+          })()}
         </div>
         
         {/* 活动工具区域 */}

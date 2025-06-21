@@ -6,6 +6,7 @@ import axios from 'axios';
 // 从环境变量获取API基础URL
 const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://localhost:5001/api';
 const API_URL = `${API_BASE_URL}/auth/`;
+const OAUTH_URL = `${API_BASE_URL}/oauth/`;
 
 // 设置请求拦截器，在每个请求中添加认证令牌
 axios.interceptors.request.use(
@@ -210,4 +211,76 @@ export const isVIP = () => {
 export const hasRole = (role) => {
   const user = getCurrentUser();
   return user && user.roles && user.roles.includes(role);
+};
+
+// 获取Google认证URL
+export const getGoogleAuthUrl = async () => {
+  try {
+    const response = await axios.get(OAUTH_URL + 'google/auth');
+    return response.data.auth_url;
+  } catch (error) {
+    console.error('Error getting Google auth URL:', error);
+    throw error.response?.data?.error || '获取Google认证URL失败';
+  }
+};
+
+// 获取GitHub认证URL
+export const getGithubAuthUrl = async () => {
+  try {
+    const response = await axios.get(OAUTH_URL + 'github/auth');
+    return response.data.auth_url;
+  } catch (error) {
+    console.error('Error getting GitHub auth URL:', error);
+    throw error.response?.data?.error || '获取GitHub认证URL失败';
+  }
+};
+
+// 处理Google OAuth回调
+export const handleGoogleCallback = async (code) => {
+  try {
+    console.log('Processing Google OAuth callback with code:', code);
+    const response = await axios.post(OAUTH_URL + 'google/callback', { code });
+    
+    console.log('Google OAuth response:', response.data);
+    
+    if (response.data.access_token) {
+      localStorage.setItem('token', response.data.access_token);
+      localStorage.setItem('user', JSON.stringify(response.data.user));
+      
+      if (response.data.user && response.data.user.id) {
+        console.log('Storing user ID from Google OAuth:', response.data.user.id);
+        localStorage.setItem('userId', response.data.user.id);
+      }
+    }
+    
+    return response.data;
+  } catch (error) {
+    console.error('Google OAuth callback error:', error);
+    throw error.response?.data?.error || 'Google登录失败';
+  }
+};
+
+// 处理GitHub OAuth回调
+export const handleGithubCallback = async (code) => {
+  try {
+    console.log('Processing GitHub OAuth callback with code:', code);
+    const response = await axios.post(OAUTH_URL + 'github/callback', { code });
+    
+    console.log('GitHub OAuth response:', response.data);
+    
+    if (response.data.access_token) {
+      localStorage.setItem('token', response.data.access_token);
+      localStorage.setItem('user', JSON.stringify(response.data.user));
+      
+      if (response.data.user && response.data.user.id) {
+        console.log('Storing user ID from GitHub OAuth:', response.data.user.id);
+        localStorage.setItem('userId', response.data.user.id);
+      }
+    }
+    
+    return response.data;
+  } catch (error) {
+    console.error('GitHub OAuth callback error:', error);
+    throw error.response?.data?.error || 'GitHub登录失败';
+  }
 };

@@ -13,6 +13,7 @@ import FrequencyGenerator from './pages/FrequencyGenerator';
 // 认证组件
 import LoginForm from './components/auth/LoginForm';
 import SignupForm from './components/auth/SignupForm';
+import OAuthCallback from './components/auth/OAuthCallback';
 
 // 用户组件
 import UserProfile from './components/user/UserProfile';
@@ -63,6 +64,10 @@ const AppRoutes = () => {
             </AuthLayout>
           </GuestRoute>
         } />
+        
+        {/* OAuth回调路由 */}
+        <Route path="/oauth/google/callback" element={<OAuthCallback />} />
+        <Route path="/oauth/github/callback" element={<OAuthCallback />} />
         
         {/* 公开路由 - 不需要登录 */}
         <Route path="/" element={<Home />} />

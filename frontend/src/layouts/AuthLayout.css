@@ -4,7 +4,8 @@
   justify-content: center;
   align-items: center;
   position: relative;
-  overflow: hidden;
+  overflow-x: hidden;
+  overflow-y: auto;
   background: linear-gradient(135deg, #1a1a2e, #16213e, #0f3460);
 }
 
@@ -104,6 +105,7 @@
   padding: 2rem;
   position: relative;
   z-index: 1;
+  margin: 2rem 0;
 }
 
 .auth-header {
@@ -132,6 +134,8 @@
 
 .auth-content {
   margin-bottom: 2rem;
+  max-height: 100%;
+  overflow-y: visible;
 }
 
 .auth-footer {
@@ -143,9 +147,15 @@
 @media (max-width: 576px) {
   .auth-container {
     padding: 1.5rem;
+    margin: 1rem 0;
   }
   
   .auth-logo {
     font-size: 2rem;
+  }
+  
+  .auth-layout {
+    align-items: flex-start;
+    padding: 1rem 0;
   }
 }
