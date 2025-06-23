@@ -93,11 +93,14 @@ app.add_middleware(
         "http://127.0.0.1:3000", 
         "https://accounts.google.com",  # OAuth提供商仍然使用HTTPS
         "https://github.com",          # OAuth提供商仍然使用HTTPS
-        "http://rainbow-city-frontend.vercel.app",  # Vercel默认域名（HTTP协议）
-        "https://rainbow-city-frontend.vercel.app", # Vercel默认域名（HTTPS协议，保留以防万一）
+        "https://rainbow-city-ai.vercel.app",  # 实际部署的Vercel域名（HTTPS协议）
+        "http://rainbow-city-ai.vercel.app",   # 实际部署的Vercel域名（HTTP协议）
+        "http://rainbow-city-frontend.vercel.app",  # 原预计的Vercel域名（HTTP协议）
+        "https://rainbow-city-frontend.vercel.app", # 原预计的Vercel域名（HTTPS协议）
         "http://rainbowcity.ai",       # 如果你有自定义域名（HTTP协议）
+        "https://rainbowcity.ai",      # 如果你有自定义域名（HTTPS协议）
         "http://*.vercel.app",         # 允许所有Vercel子域名（HTTP协议）
-        "https://*.vercel.app",        # 允许所有Vercel子域名（HTTPS协议，保留以防万一）
+        "https://*.vercel.app",        # 允许所有Vercel子域名（HTTPS协议）
         "http://47.236.10.92",         # 后端服务器IP
         "http://47.236.10.92:5001"     # 后端服务器IP带端口
     ],
