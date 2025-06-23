@@ -88,7 +88,15 @@ app.add_middleware(ResourceCleanupMiddleware)
 # 配置 CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000", "https://accounts.google.com", "https://github.com"],  # 指定允许的前端源
+    allow_origins=[
+        "http://localhost:3000", 
+        "http://127.0.0.1:3000", 
+        "https://accounts.google.com", 
+        "https://github.com",
+        "https://rainbow-city-frontend.vercel.app",  # Vercel默认域名（根据你的项目名调整）
+        "https://rainbowcity.ai",  # 如果你有自定义域名
+        "https://*.vercel.app"  # 允许所有Vercel子域名（开发阶段可用，生产环境建议明确指定）
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
