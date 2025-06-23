@@ -355,8 +355,11 @@ export const handleSubmit = async (e, {
 }) => {
   e.preventDefault();
   
-  // 声明loadingTimeoutId变量，用于后续清除超时计时器
+  // 声明变量，用于后续清除超时计时器和处理附件
   let loadingTimeoutId;
+  let safetyTimeoutId;
+  let imageAttachment = null;
+  
   if (!textInput.trim() && attachments.length === 0) return;
   
   // 创建新的回合ID
@@ -374,25 +377,25 @@ export const handleSubmit = async (e, {
   let messageContent = textInput.trim();
   let messageType = MessageType.TEXT;
   let messageData = {};
-  let imageAttachment = null;
   
-  // 创建本地副本以避免状态更新后的引用问题
-  const currentAttachments = [...attachments];
-  
-  // 检查是否有图片附件
-  if (currentAttachments.length > 0) {
-    for (const attachment of currentAttachments) {
-      if (attachment.type === MessageType.IMAGE) {
-        imageAttachment = attachment;
-        messageType = MessageType.MIXED; // 混合类型（文本+图片）
-        messageData = { 
-          text: messageContent,
-          attachment: attachment 
-        };
-        break;
+  // 处理附件
+  if (attachments.length > 0) {
+    const currentAttachments = [...attachments];
+    
+    // 检查是否有图片附件
+    if (currentAttachments.length > 0) {
+      for (const attachment of currentAttachments) {
+        if (attachment.type === MessageType.IMAGE) {
+          imageAttachment = attachment;
+          messageType = MessageType.MIXED; // 混合类型（文本+图片）
+          messageData = { 
+            text: messageContent,
+            attachment: attachment 
+          };
+          break;
+        }
       }
     }
-  }
   
   // 创建用户消息
   if (messageType === MessageType.MIXED) {
@@ -436,7 +439,13 @@ export const handleSubmit = async (e, {
   
   // 添加全局超时保护，确保即使请求卡住也会重置加载状态
   const SAFETY_TIMEOUT = 30000; // 30秒安全超时
-  const safetyTimeoutId = setTimeout(() => {
+  
+  // 检查是否有图片附件
+  if (attachments.length > 0) {
+    imageAttachment = attachments[0];
+  }
+  
+  safetyTimeoutId = setTimeout(() => {
     console.error('[ERROR] 安全超时触发，强制重置加载状态');
     setIsLoading(false);
     setError('请求处理时间过长，已自动取消。请检查网络连接后重试。');
@@ -541,6 +550,10 @@ export const handleSubmit = async (e, {
       
       // 检测当前聊天窗口并确保会话ID的一致性
       
+      // 定义变量
+      let sessionIdToUse;
+      let isNewConversation = false;
+      
       // 如果已有当前对话ID，则使用该ID对应的会话ID
       if (currentConversationId) {
         console.log('[DEBUG] 当前对话已有ID:', currentConversationId);
@@ -583,17 +596,78 @@ export const handleSubmit = async (e, {
       
       try {
         // 使用统一的sendChatRequest函数发送请求
-        const data = await sendChatRequest(apiEndpoint, requestBody);
+        const rawResponse = await fetch(API_CONFIG.getFullUrl(apiEndpoint), {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${localStorage.getItem('token')}`
+          },
+          body: JSON.stringify(requestBody)
+        });
+        
+        // 获取原始响应文本
+        const responseText = await rawResponse.text();
+        console.log('[DEBUG] 原始响应文本:', responseText);
+        
+        // 尝试解析JSON
+        let rawData;
+        try {
+          rawData = JSON.parse(responseText);
+        } catch (e) {
+          console.error('[ERROR] 解析JSON失败:', e);
+          rawData = { response: responseText };
+        }
+        
+        // 直接提取纯文本响应
+        let responseContent = '';
+        
+        if (rawData && rawData.response) {
+          if (typeof rawData.response === 'string') {
+            // 如果响应是字符串，尝试检查是否是JSON
+            try {
+              const possibleJson = JSON.parse(rawData.response);
+              if (possibleJson && typeof possibleJson === 'object') {
+                responseContent = possibleJson.content || 
+                                 possibleJson.text || 
+                                 possibleJson.message || 
+                                 possibleJson.response || 
+                                 rawData.response;
+              } else {
+                responseContent = rawData.response;
+              }
+            } catch (e) {
+              // 不是JSON，直接使用原始字符串
+              responseContent = rawData.response;
+            }
+          } else if (typeof rawData.response === 'object') {
+            responseContent = rawData.response.content || 
+                             rawData.response.text || 
+                             rawData.response.message || 
+                             Object.values(rawData.response).find(v => typeof v === 'string') || 
+                             'AI助手响应';
+          }
+        }
+        
+        console.log('[DEBUG] 提取的纯文本响应:', responseContent);
+        
+        // 创建一个新的简化数据对象
+        const data = {
+          response: responseContent,
+          session_id: rawData.session_id,
+          has_tool_calls: rawData.has_tool_calls || false,
+          tool_calls: rawData.tool_calls || [],
+          tool_results: rawData.tool_results || []
+        };
+        
         response = {
           ok: true,
           json: () => Promise.resolve(data),
-          text: () => Promise.resolve(JSON.stringify(data)),
+          text: () => Promise.resolve(responseContent),
           status: 200,
           headers: new Headers({
             'content-type': 'application/json'
           })
         };
-        console.log('[DEBUG] 收到文本请求响应:', data);
       } catch (fetchError) {
         console.error('[ERROR] 文本请求失败:', fetchError);
         throw fetchError;
@@ -631,19 +705,74 @@ export const handleSubmit = async (e, {
       console.log('[DEBUG] 处理文本请求响应数据:', data);
     }
     
-    // 处理响应
-    console.log('[DEBUG] 解析后的响应数据:', data);
-    if (data && data.response) {
-      // 创建助手消息
-      const assistantMessage = {
-        ...createMessage(
-          SenderRole.ASSISTANT, 
-          data.response.content || data.response,
-          data.response.type || MessageType.TEXT,
-          data.response.metadata || {}
-        ),
-        visible: true // 确保消息可见
-      };
+    // 只提取并显示JSON中的response字段
+    let responseContent = '';
+    
+    // 如果有数据，只提取response字段
+    if (data) {
+      console.log('[DEBUG] 原始数据格式:', typeof data);
+      
+      // 如果是对象，直接提取response字段
+      if (typeof data === 'object' && data.response) {
+        // 直接返回JSON格式的字符串
+        responseContent = JSON.stringify({
+          "response": data.response,
+          "session_id": data.session_id || "",
+          "has_tool_calls": data.tool_calls && data.tool_calls.length > 0
+        });
+        console.log('[DEBUG] 提取并返回response字段');
+      }
+      // 如果是字符串，尝试解析为JSON后提取response
+      else if (typeof data === 'string') {
+        const trimmed = data.trim();
+        if (trimmed.startsWith('{')) {
+          try {
+            const parsed = JSON.parse(trimmed);
+            if (parsed && parsed.response) {
+              // 提取response并返回JSON格式
+              responseContent = JSON.stringify({
+                "response": parsed.response,
+                "session_id": parsed.session_id || "",
+                "has_tool_calls": parsed.tool_calls && parsed.tool_calls.length > 0
+              });
+              console.log('[DEBUG] 从字符串提取并返回response字段');
+            } else {
+              // 如果没有response字段，返回原始JSON
+              responseContent = trimmed;
+            }
+          } catch (e) {
+            console.log('[ERROR] 解析JSON失败:', e);
+            responseContent = trimmed; // 如果解析失败，使用原始数据
+          }
+        } else {
+          // 不是JSON格式，直接使用
+          responseContent = trimmed;
+        }
+      }
+      // 如果是其他类型的数据，转换为字符串
+      else {
+        responseContent = String(data);
+      }
+    }
+    
+    // 如果没有提取到内容，使用默认回复
+    if (!responseContent) {
+      responseContent = '你好！有什么可以帮助你的吗？';
+    }
+    
+    console.log('[DEBUG] 最终提取的响应内容:', responseContent.substring(0, 100) + (responseContent.length > 100 ? '...' : ''));
+    
+    // 创建一个助手消息对象，只包含响应内容
+    const assistantMessage = {
+      id: generateUUID(),
+      sender: SenderRole.ASSISTANT,
+      content: responseContent, // 直接使用提取的响应内容
+      type: MessageType.TEXT,
+      timestamp: new Date().toISOString(),
+      isTyping: true,
+      displayedContent: '', // 初始为空，将通过打字机效果逐字显示
+      visible: true
+    };
       
       // 如果有工具调用
       if (data.tool_calls && data.tool_calls.length > 0) {
@@ -827,33 +956,40 @@ export const handleSubmit = async (e, {
           return [...prevMessages, formatErrorMessage];
         });
       }
-    } catch (err) {
-      console.error('[ERROR] 请求处理错误:', err);
-      
-      // 创建错误消息
-      const errorMessage = createMessage(
-        SenderRole.SYSTEM,
-        `错误: ${err.message || '未知错误'}`,
-        MessageType.TEXT,
-        { error: true }
-      );
-      
-      setMessages(prev => [...prev, errorMessage]);
-    } finally {
-      // 清除所有超时计时器
-      if (loadingTimeoutId) {
-        clearTimeout(loadingTimeoutId);
-      }
-      
-      // 清除安全超时计时器
-      if (safetyTimeoutId) {
-        clearTimeout(safetyTimeoutId);
-      }
-      
-      console.log('[DEBUG] 请求处理完成，重置加载状态');
-      // 重置加载状态
-      setIsLoading(false);
+    } catch (error) {
+      console.error('[ERROR] 处理响应时出错:', error);
     }
+  }
+  
+  try {
+    // Additional code if needed
+  } catch (err) {
+    console.error('[ERROR] 请求处理错误:', err);
+    
+    // 创建错误消息
+    const errorMessage = createMessage(
+      SenderRole.SYSTEM,
+      `错误: ${err.message || '未知错误'}`,
+      MessageType.TEXT,
+      { error: true }
+    );
+    
+    setMessages(prev => [...prev, errorMessage]);
+  } finally {
+    // 清除所有超时计时器
+    if (loadingTimeoutId) {
+      clearTimeout(loadingTimeoutId);
+    }
+    
+    // 清除安全超时计时器
+    if (safetyTimeoutId) {
+      clearTimeout(safetyTimeoutId);
+    }
+    
+    console.log('[DEBUG] 请求处理完成，重置加载状态');
+    // 重置加载状态
+    setIsLoading(false);
+  }
 };
 
 // 处理工具调用
@@ -898,3 +1034,6 @@ export const handleCreateNewChat = ({
     }
   ]);
 };
+
+// Export other necessary functions
+export { handleToolAction, handleCreateNewChat };

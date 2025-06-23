@@ -267,41 +267,160 @@ function AiChatCore() {
     }
   }, [messages]);
   
-  // 处理初始消息的打字动画效果
+  // 完全重写的打字机效果实现 - 直接解析并显示response内容
   useEffect(() => {
-    // 查找所有标记为isTyping的消息
-    const typingMessages = messages.filter(msg => msg.isTyping && msg.visible !== false);
+    // 提取JSON中的response字段
+    const extractResponseContent = (content) => {
+      // 如果内容为空或非字符串，返回原始内容
+      if (!content || typeof content !== 'string') {
+        return content;
+      }
+      
+      // 如果是JSON字符串，尝试提取response字段
+      if (content.trim().startsWith('{')) {
+        try {
+          const parsed = JSON.parse(content);
+          if (parsed && parsed.response) {
+            console.log('[DEBUG] 成功提取response字段');
+            return parsed.response;
+          }
+        } catch (e) {
+          console.log('[ERROR] JSON解析失败:', e);
+        }
+      }
+      
+      return content;
+    };
     
+    // 首先遍历所有消息，将JSON内容替换为response字段
+    const processedMessages = messages.map(message => {
+      // 只处理助手消息
+      if (message.sender === SenderRole.ASSISTANT && message.type === MessageType.TEXT) {
+        const extractedContent = extractResponseContent(message.content);
+        
+        // 如果提取的内容与原始内容不同，更新消息
+        if (extractedContent !== message.content) {
+          return {
+            ...message,
+            content: extractedContent,
+            // 如果正在打字，重置显示内容以重新开始打字机效果
+            displayedContent: message.isTyping ? '' : extractedContent
+          };
+        }
+      }
+      return message;
+    });
+    
+    // 如果有消息被处理过，更新消息数组
+    const hasChanges = JSON.stringify(processedMessages) !== JSON.stringify(messages);
+    if (hasChanges) {
+      console.log('[DEBUG] 更新消息数组，替换JSON为response内容');
+      setMessages(processedMessages);
+      return; // 跳过当前效果，等待下一次触发
+    }
+    
+    // 清除所有打字机计时器
+    const typingIntervals = {};
+    
+    // 查找所有需要打字机效果的消息
+    const typingMessages = messages.filter(msg => 
+      msg.isTyping === true && 
+      msg.visible !== false && 
+      msg.sender === SenderRole.ASSISTANT
+    );
+    
+    console.log('[DEBUG] 找到需要打字机效果的消息:', typingMessages.length);
+    
+    // 处理每一个需要打字机效果的消息
     if (typingMessages.length > 0) {
       typingMessages.forEach(message => {
-        const fullContent = message.content;
-        let currentIndex = message.displayedContent ? message.displayedContent.length : 0;
+        // 清除之前的计时器（如果有）
+        if (typingIntervals[message.id]) {
+          clearInterval(typingIntervals[message.id]);
+        }
         
-        // 如果还没有显示完整的内容
-        if (currentIndex < fullContent.length) {
-          const typingInterval = setInterval(() => {
+        // 开始打字机效果
+        let currentIndex = 0;
+        const messageContent = message.content || '';
+        
+        // 设置新的打字机计时器
+        typingIntervals[message.id] = setInterval(() => {
+          if (currentIndex <= messageContent.length) {
+            const displayedText = messageContent.substring(0, currentIndex);
+            
             setMessages(prevMessages => {
               return prevMessages.map(msg => {
                 if (msg.id === message.id) {
-                  const newIndex = msg.displayedContent ? msg.displayedContent.length + 1 : 1;
-                  const newDisplayedContent = fullContent.substring(0, newIndex);
-                  
-                  // 如果已经显示完整内容，停止打字动画
-                  if (newIndex >= fullContent.length) {
-                    clearInterval(typingInterval);
-                    return { ...msg, displayedContent: fullContent, isTyping: false };
-                  }
-                  
-                  return { ...msg, displayedContent: newDisplayedContent };
+                  return { 
+                    ...msg, 
+                    displayedContent: displayedText,
+                    isTyping: currentIndex < messageContent.length
+                  };
                 }
                 return msg;
               });
             });
-          }, 50); // 每50毫秒显示一个字符
-        }
+            
+            currentIndex++;
+            
+            // 如果已经显示完所有内容，停止打字机效果
+            if (currentIndex > messageContent.length) {
+              clearInterval(typingIntervals[message.id]);
+              delete typingIntervals[message.id];
+            }
+          }
+        }, 20); // 每20毫秒显示一个字符
       });
     }
-  }, []); // 只在组件挂载时运行一次
+    
+    // 清除所有计时器
+    return () => {
+      Object.keys(typingIntervals).forEach(id => {
+        clearInterval(typingIntervals[id]);
+      });
+    };
+  }, [messages, setMessages]);
+  
+  // 定义打字机效果函数
+  function startTypingEffect(messageId, content, intervals) {
+    let currentIndex = 0;
+      
+      // 如果还没有显示完整的内容
+      if (currentIndex < content.length) {
+        // 使用消息ID作为键来跟踪计时器
+        intervals[messageId] = setInterval(() => {
+          currentIndex++;
+          
+          setMessages(prevMessages => {
+            return prevMessages.map(msg => {
+              if (msg.id === messageId) {
+                const newDisplayedContent = content.substring(0, currentIndex);
+                
+                // 如果已经显示完整内容，停止打字动画
+                if (currentIndex >= content.length) {
+                  clearInterval(intervals[messageId]);
+                  delete intervals[messageId];
+                  return { ...msg, displayedContent: content, isTyping: false };
+                }
+                
+                return { ...msg, displayedContent: newDisplayedContent };
+              }
+              return msg;
+            });
+          });
+        }, 20); // 每20毫秒显示一个字符
+      }
+    };
+  
+  // 监听消息变化，应用打字机效果
+  useEffect(() => {
+    const intervals = {};
+    
+    // 清除所有计时器
+    return () => {
+      Object.values(intervals).forEach(interval => clearInterval(interval));
+    };
+  }, [messages]);
   
   // 检查登录状态并获取对话列表
   useEffect(() => {

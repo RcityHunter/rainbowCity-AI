@@ -1,13 +1,70 @@
 import React from 'react';
 
-// 渲染消息内容
+// 渲染文本消息的内容
 export const renderMessageContent = (message) => {
   // 根据消息类型渲染不同内容
   switch (message.type) {
     case 'text':
+      // 直接处理消息内容，强制只显示response字段
+      let displayContent;
+      let contentToShow;
+      
+      // 强制提取JSON中的response字段
+      const extractResponse = (content) => {
+        if (!content) return '';
+        
+        // 如果是字符串并且可能是JSON
+        if (typeof content === 'string') {
+          const trimmed = content.trim();
+          if (trimmed.startsWith('{')) {
+            try {
+              const parsed = JSON.parse(trimmed);
+              if (parsed && parsed.response) {
+                return typeof parsed.response === 'string' ? 
+                  parsed.response : JSON.stringify(parsed.response);
+              }
+            } catch (e) {
+              // 如果解析失败，使用原始内容
+              console.log('解析JSON失败，使用原始内容');
+            }
+          }
+          return trimmed;
+        }
+        
+        // 如果是对象
+        if (typeof content === 'object' && content !== null) {
+          if (content.response) {
+            return typeof content.response === 'string' ? 
+              content.response : JSON.stringify(content.response);
+          }
+          return JSON.stringify(content);
+        }
+        
+        return String(content);
+      };
+      
+      // 如果正在打字，先处理displayedContent
+      if (message.isTyping) {
+        // 如果有displayedContent，直接使用
+        displayContent = message.displayedContent || '';
+        
+        // 如果消息内容是JSON，先提取response字段
+        contentToShow = (
+          <>
+            <span className="typing-text">{displayContent}</span>
+            <span className="typing-cursor">|</span>
+          </>
+        );
+      } else {
+        // 非打字状态，直接提取并显示response
+        const extractedContent = extractResponse(message.content);
+        contentToShow = extractedContent;
+      }
+      
+      // 直接返回内容
       return (
         <div className="message-content">
-          {message.isTyping ? message.displayedContent : message.content}
+          {contentToShow}
         </div>
       );
       

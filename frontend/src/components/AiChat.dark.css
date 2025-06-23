@@ -1,4 +1,24 @@
 /* AI聊天组件 - 深色主题样式 */
+
+/* 打字机效果样式 */
+.typing-text {
+  display: inline;
+}
+
+.typing-cursor {
+  display: inline-block;
+  width: 2px;
+  height: 1em;
+  background-color: var(--text-primary);
+  margin-left: 2px;
+  animation: blink 1s infinite;
+  vertical-align: middle;
+}
+
+@keyframes blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0; }
+}
 :root {
   --primary-color: #a18cd1;
   --secondary-color: #fbc2eb;

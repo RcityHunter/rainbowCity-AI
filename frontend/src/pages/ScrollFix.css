@@ -1,0 +1,70 @@
+/* 滚动修复样式 - 使用更强的CSS规则 */
+html {
+  height: auto !important;
+  min-height: 100% !important;
+  overflow-y: scroll !important;
+  overflow-x: hidden !important;
+  position: static !important;
+}
+
+body {
+  height: auto !important;
+  min-height: 100% !important;
+  overflow-y: visible !important;
+  overflow-x: hidden !important;
+  position: static !important;
+  margin: 0 !important;
+  padding: 0 !important;
+}
+
+#root {
+  height: auto !important;
+  min-height: 100% !important;
+  overflow: visible !important;
+  position: static !important;
+  display: block !important;
+}
+
+/* 强制容器可滚动 */
+.landing-container {
+  height: auto !important;
+  min-height: 100vh !important;
+  overflow: visible !important;
+  position: static !important;
+  display: block !important;
+  width: 100% !important;
+}
+
+/* 强制主要内容区域可滚动 */
+main {
+  height: auto !important;
+  overflow: visible !important;
+  position: static !important;
+  display: block !important;
+}
+
+/* 确保所有内容区域可以正常滚动 */
+.features-section,
+.architecture-section,
+.tools-section,
+.multimodal-section,
+.memory-section,
+.faq-section,
+.cta-section {
+  height: auto !important;
+  overflow: visible !important;
+  position: static !important;
+  display: block !important;
+}
+
+/* 移除可能阻止滚动的固定定位元素 */
+.landing-header {
+  position: sticky !important;
+  width: 100% !important;
+  box-sizing: border-box !important;
+}
+
+/* 测试用的辅助样式 */
+.test-height {
+  height: 2000px !important; /* 测试用，强制页面高度足够显示滚动条 */
+}

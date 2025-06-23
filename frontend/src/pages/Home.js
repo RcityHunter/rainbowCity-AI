@@ -3,6 +3,7 @@ import { Link, useNavigate, useLocation } from 'react-router-dom';
 import { isAuthenticated } from '../services/auth_service';
 import UserAvatar from '../components/common/UserAvatar';
 import './Home.css';
+import './ScrollFix.css'; // 导入滚动修复样式
 
 const Home = () => {
   const navigate = useNavigate();
@@ -41,8 +42,15 @@ const Home = () => {
   // 根据路由选择不同的样式类
   const containerClass = isDashboard ? "dashboard-home-container" : "landing-container";
   
+  // 添加一个内联样式，强制页面可滚动
+  const pageStyle = {
+    height: 'auto',
+    overflowY: 'auto',
+    position: 'relative'
+  };
+
   return (
-    <div className={containerClass}>
+    <div className={containerClass} style={pageStyle}>
       {/* 顶部导航栏 - 仅在非仪表盘路由下显示 */}
       {!isDashboard && (
         <header className="landing-header">
@@ -226,14 +234,6 @@ const Home = () => {
                 <p>与先进的AI助手进行对话，获取信息、解决问题或简单聊天。支持文本、图像和音频输入。</p>
                 <button onClick={handleStartChat} className="btn btn-secondary">立即体验</button>
               </div>
-            </div>
-            <div className="tool-preview reverse">
-              <div className="tool-description">
-                <h3>AI-ID与频率编号</h3>
-                <p>使用我们的生成工具创建独特的AI标识符和频率编号，定义和管理AI特性。</p>
-                <Link to="/ai-id-generator" className="btn btn-secondary">了解更多</Link>
-              </div>
-              <div className="tool-image id-preview"></div>
             </div>
           </div>
         </section>
