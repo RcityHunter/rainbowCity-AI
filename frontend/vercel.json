@@ -10,7 +10,7 @@
   "routes": [
     {
       "src": "/api/(.*)",
-      "dest": "https://YOUR_BACKEND_SERVER/api/$1"
+      "dest": "http://47.236.10.92:5001/api/$1"
     },
     {
       "src": "/static/(.*)",

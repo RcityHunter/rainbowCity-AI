@@ -91,11 +91,15 @@ app.add_middleware(
     allow_origins=[
         "http://localhost:3000", 
         "http://127.0.0.1:3000", 
-        "https://accounts.google.com", 
-        "https://github.com",
-        "https://rainbow-city-frontend.vercel.app",  # Vercel默认域名（根据你的项目名调整）
-        "https://rainbowcity.ai",  # 如果你有自定义域名
-        "https://*.vercel.app"  # 允许所有Vercel子域名（开发阶段可用，生产环境建议明确指定）
+        "https://accounts.google.com",  # OAuth提供商仍然使用HTTPS
+        "https://github.com",          # OAuth提供商仍然使用HTTPS
+        "http://rainbow-city-frontend.vercel.app",  # Vercel默认域名（HTTP协议）
+        "https://rainbow-city-frontend.vercel.app", # Vercel默认域名（HTTPS协议，保留以防万一）
+        "http://rainbowcity.ai",       # 如果你有自定义域名（HTTP协议）
+        "http://*.vercel.app",         # 允许所有Vercel子域名（HTTP协议）
+        "https://*.vercel.app",        # 允许所有Vercel子域名（HTTPS协议，保留以防万一）
+        "http://47.236.10.92",         # 后端服务器IP
+        "http://47.236.10.92:5001"     # 后端服务器IP带端口
     ],
     allow_credentials=True,
     allow_methods=["*"],
