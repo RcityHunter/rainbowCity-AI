@@ -212,6 +212,7 @@ html, body {
   background-image: linear-gradient(135deg, #2a2a3d, #3a3a4d);
   color: var(--text-primary);
   text-align: left;
+  align-self: flex-end;
 }
 
 .message.assistant {
@@ -262,6 +263,7 @@ html, body {
   word-break: break-word; /* 允许在任何字符处换行 */
   position: relative;
   color: inherit;
+  text-align: left; /* 确保所有消息内容左对齐 */
 }
 
 /* 打字机光标效果已移除 */
@@ -867,8 +869,9 @@ html, body {
 .thinking {
   display: flex;
   align-items: center;
-  justify-content: center;
+  justify-content: flex-start;
   padding: 10px;
+  margin-left: 10px;
 }
 
 .thinking-dots {

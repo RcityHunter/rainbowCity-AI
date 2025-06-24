@@ -148,6 +148,7 @@ function AiChat() {
   const [attachments, setAttachments] = useState([]);
   const [savedAttachments, setSavedAttachments] = useState([]); // 已保存的附件，即使发送后仍然可用
   const [isLoading, setIsLoading] = useState(false);
+  const [isThinking, setIsThinking] = useState(false); // AI思考状态
   const [error, setError] = useState(null);
   const [loadingError, setLoadingError] = useState(null);
   
@@ -236,8 +237,8 @@ function AiChat() {
     // 检查是否有新的AI消息需要添加到打字机状态中
     const aiMessages = messages.filter(m => m.role === SenderRole.ASSISTANT);
     
-    // 对于每个AI消息，如果它不在typingState中，则添加它
-    messages.forEach(message => {
+    // 只对AI助手消息应用打字机效果
+    aiMessages.forEach(message => {
       if (!typingState[message.id] && message.content) {
         // 先提取response内容，再初始化打字机状态
         const extractedContent = extractResponseContent(message.content);
@@ -506,9 +507,9 @@ function AiChat() {
       // 如果提供了时间戳，使用提供的时间戳，否则使用当前时间
       timestamp: timestamp || additionalData.timestamp || new Date().toISOString(),
       visible: true,
-      // 助手消息默认启用打字机效果
-      isTyping: role === SenderRole.ASSISTANT || additionalIsTyping === true,
-      // 助手消息初始显示内容为空，其他消息显示完整内容
+      // 只有AI助手消息使用打字机效果，用户消息永远不使用
+      isTyping: role === SenderRole.ASSISTANT ? true : false,
+      // 助手消息初始显示内容为空，用户消息显示完整内容
       displayedContent: role === SenderRole.ASSISTANT ? '' : content,
     };
     
@@ -1041,7 +1042,7 @@ function AiChat() {
         return null;
       }
     } catch (error) {
-      console.error('保存对话时发生错误:', error);
+      console.error('处理聊天请求时出错:', error);
       return null;
     }
   };
@@ -1125,6 +1126,7 @@ function AiChat() {
     setTextInput('');
     setAttachments([]);
     setIsLoading(true);
+    setIsThinking(true); // 设置AI思考状态为激活
     
     // 如果是新对话（没有currentConversationId），立即更新侧边栏
     if (!currentConversationId && isLoggedIn) {
@@ -1536,10 +1538,15 @@ function AiChat() {
       } else {
         throw new Error('未知响应格式');
       }
+      
+      // 重置加载状态和思考状态
+      setIsLoading(false);
+      setIsThinking(false); // 取消AI思考状态
     } catch (err) {
       console.error('Chat error:', err);
-      // 重置加载状态
+      // 重置加载状态和思考状态
       setIsLoading(false);
+      setIsThinking(false); // 发生错误时也取消AI思考状态
       setError(err.message || String(err));
       
       // 添加错误消息
@@ -2137,6 +2144,19 @@ const renderMessageContent = (message) => {
                     )}
                   </React.Fragment>
                 ))}
+                
+                {/* 显示AI思考状态 */}
+                {isThinking && finalGroups.length > 0 && (
+                  <div className="message-wrapper assistant-message">
+                    <div className="thinking">
+                      <div className="thinking-dots">
+                        <span></span>
+                        <span></span>
+                        <span></span>
+                      </div>
+                    </div>
+                  </div>
+                )}
               </div>
             );
           })()}
