@@ -182,17 +182,45 @@ function AiChat() {
   const audioInputRef = useRef(null);
   const videoInputRef = useRef(null);
   const documentInputRef = useRef(null);
+  const messagesContainerRef = useRef(null); // 添加消息容器的引用
   
   // 上传按钮悬停状态
   const [isUploadHovered, setIsUploadHovered] = useState(false);
   const uploadContainerRef = useRef(null);
   
-  // 自动滚动到最新消息
+  // 滚动到最新消息的函数 - 使用多种方法确保滚动生效
+  const scrollToBottom = (force = false) => {
+    // 方法1：使用messagesEndRef
+    if (messagesEndRef.current) {
+      messagesEndRef.current.scrollIntoView({ behavior: force ? 'auto' : 'smooth' });
+    }
+    
+    // 方法2：直接操作消息容器
+    const chatMessages = document.querySelector('.chat-messages');
+    if (chatMessages) {
+      chatMessages.scrollTop = chatMessages.scrollHeight;
+    }
+    
+    // 方法3：如果有新添加的messagesContainerRef
+    if (messagesContainerRef.current) {
+      messagesContainerRef.current.scrollTop = messagesContainerRef.current.scrollHeight;
+    }
+  };
+  
+  // 在消息变化时自动滚动到最新消息
   useEffect(() => {
-    const scrollToBottom = () => {
-      messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-    };
+    // 立即滚动一次
     scrollToBottom();
+    
+    // 使用多个延时确保在DOM完全更新后滚动
+    const timers = [
+      setTimeout(() => scrollToBottom(), 100),
+      setTimeout(() => scrollToBottom(), 300),
+      setTimeout(() => scrollToBottom(true), 500),
+      setTimeout(() => scrollToBottom(true), 1000)
+    ];
+    
+    return () => timers.forEach(timer => clearTimeout(timer));
   }, [messages]);
   
   // 添加全局点击事件监听器，点击上传容器外部时关闭上传选项
@@ -253,6 +281,9 @@ function AiChat() {
         }));
       }
     });
+    
+    // 滚动到最新消息
+    scrollToBottom();
   }, [messages, typingState]);
   
   // 处理打字机效果的核心逻辑
@@ -292,6 +323,11 @@ function AiChat() {
           const newDisplayedContent = messageState.displayedContent + nextChar;
           
           console.log(`消息 ${id.substring(0, 6)} 添加字符: '${nextChar}', 进度: ${newDisplayedContent.length}/${messageState.fullContent.length}`);
+          
+          // 每10个字符滚动一次到底部
+          if (newDisplayedContent.length % 10 === 0 || newDisplayedContent.length === messageState.fullContent.length) {
+            setTimeout(() => scrollToBottom(), 0);
+          }
           
           return {
             ...prev,
@@ -366,6 +402,32 @@ function AiChat() {
   // 处理文本输入变化
   const handleInputChange = (e) => {
     setTextInput(e.target.value);
+  };
+  
+  // 处理键盘事件，实现Ctrl+Enter换行功能
+  const handleKeyDown = (e) => {
+    // 检测是否按下了Ctrl+Enter组合键
+    if (e.key === 'Enter' && e.ctrlKey) {
+      // 阻止默认行为（表单提交）
+      e.preventDefault();
+      // 在当前光标位置插入换行符
+      const cursorPosition = e.target.selectionStart;
+      const textBeforeCursor = textInput.substring(0, cursorPosition);
+      const textAfterCursor = textInput.substring(cursorPosition);
+      // 更新文本输入，插入换行符
+      setTextInput(textBeforeCursor + '\n' + textAfterCursor);
+      // 下一个渲染周期后设置光标位置
+      setTimeout(() => {
+        e.target.selectionStart = cursorPosition + 1;
+        e.target.selectionEnd = cursorPosition + 1;
+      }, 0);
+    } else if (e.key === 'Enter' && !e.ctrlKey && !e.shiftKey) {
+      // 普通Enter键直接提交表单
+      if (textInput.trim() !== '' || attachments.length > 0) {
+        e.preventDefault();
+        handleSubmit(e);
+      }
+    }
   };
 
   // 处理文件附件上传
@@ -1052,6 +1114,11 @@ function AiChat() {
     e.preventDefault();
     if (!textInput.trim() && attachments.length === 0) return;
     
+    // 提交后立即滚动到底部 - 使用强制滚动
+    setTimeout(() => scrollToBottom(true), 0);
+    // 在用户消息显示后再次滚动
+    setTimeout(() => scrollToBottom(true), 100);
+    
     // 创建新的回合ID
     const newTurnId = generateUUID();
     setTurnId(newTurnId);
@@ -1501,6 +1568,12 @@ function AiChat() {
               })();
             }
             
+            // AI回复完成后，多次尝试滚动到底部，确保显示最新消息
+            setTimeout(() => scrollToBottom(true), 0);
+            setTimeout(() => scrollToBottom(true), 100);
+            setTimeout(() => scrollToBottom(true), 300);
+            setTimeout(() => scrollToBottom(true), 500);
+            
             return updatedMessages;
           });
         } else {
@@ -1529,6 +1602,12 @@ function AiChat() {
                 }
               })();
             }
+            
+            // AI回复完成后，多次尝试滚动到底部，确保显示最新消息
+            setTimeout(() => scrollToBottom(true), 0);
+            setTimeout(() => scrollToBottom(true), 100);
+            setTimeout(() => scrollToBottom(true), 300);
+            setTimeout(() => scrollToBottom(true), 500);
             
             return updatedMessages;
           });
@@ -2108,7 +2187,7 @@ const renderMessageContent = (message) => {
             
             // 渲染消息列表
             return (
-              <div className="seamless-messages-container">
+              <div className="seamless-messages-container" ref={messagesContainerRef}>
                 {/* 欢迎消息 */}
                 <div className="message-wrapper assistant-message">
                   <div className="message">
@@ -2317,11 +2396,13 @@ const renderMessageContent = (message) => {
               accept="application/*,text/*,.pdf,.doc,.docx,.txt,.xls,.xlsx,.ppt,.pptx"
             />
             
-            <input
+            <textarea
               value={textInput}
               onChange={handleInputChange}
-              placeholder="输入您的问题..."
+              onKeyDown={handleKeyDown}
+              placeholder="输入您的问题...(Ctrl+Enter换行)"
               className="chat-input"
+              rows="1"
               disabled={isLoading}
             />
             

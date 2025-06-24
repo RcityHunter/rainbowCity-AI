@@ -518,8 +518,14 @@ html, body {
   color: var(--text-primary);
   font-size: 1rem;
   outline: none;
-  transition: border-color 0.3s;
+  transition: border-color 0.3s, height 0.2s;
   max-width: calc(100% - 60px); /* 减少留给按钮的空间，增加输入框长度 */
+  resize: none; /* 禁止用户手动调整大小 */
+  min-height: 24px;
+  max-height: 150px; /* 限制最大高度 */
+  overflow-y: auto; /* 内容超出时显示滚动条 */
+  line-height: 1.5;
+  font-family: inherit; /* 继承字体 */
 }
 
 .chat-input:focus {
