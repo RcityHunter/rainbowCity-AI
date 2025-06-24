@@ -109,6 +109,50 @@ html, body {
   -webkit-text-fill-color: transparent;
 }
 
+/* RC AI 品牌名称的呼吸效果 */
+.logo-brand {
+  position: relative;
+  animation: logoPulse 8s infinite alternate;
+  text-shadow: 0 0 5px rgba(161, 140, 209, 0.7),
+               0 0 10px rgba(161, 140, 209, 0.5),
+               0 0 15px rgba(251, 194, 235, 0.5),
+               0 0 20px rgba(251, 194, 235, 0.3);
+}
+
+/* 为品牌名称添加光晕效果 */
+.logo-brand::after {
+  content: '';
+  position: absolute;
+  top: -10px;
+  left: -15px;
+  right: -15px;
+  bottom: -10px;
+  border-radius: 15px;
+  background: radial-gradient(circle, rgba(161, 140, 209, 0.3) 0%, rgba(251, 194, 235, 0.2) 50%, rgba(0, 0, 0, 0) 70%);
+  filter: blur(8px);
+  z-index: -1;
+  opacity: 0;
+  animation: logoGlow 8s infinite alternate;
+}
+
+@keyframes logoPulse {
+  0% {
+    transform: scale(1);
+  }
+  100% {
+    transform: scale(1.05);
+  }
+}
+
+@keyframes logoGlow {
+  0% {
+    opacity: 0.3;
+  }
+  100% {
+    opacity: 0.8;
+  }
+}
+
 .main-nav ul {
   display: flex;
   list-style: none;
@@ -163,6 +207,47 @@ html, body {
 .btn-primary:hover {
   transform: translateY(-2px);
   box-shadow: 0 5px 15px rgba(161, 140, 209, 0.5);
+}
+
+/* 为主页的"开始聊天"按钮添加呼吸效果 */
+.hero-actions .btn-primary {
+  animation: buttonPulse 8s infinite alternate;
+  position: relative;
+}
+
+/* 添加光晕效果 */
+.hero-actions .btn-primary::after {
+  content: '';
+  position: absolute;
+  top: -5px;
+  left: -5px;
+  right: -5px;
+  bottom: -5px;
+  border-radius: 10px;
+  background: var(--gradient);
+  opacity: 0.5;
+  z-index: -1;
+  animation: buttonGlow 8s infinite alternate;
+}
+
+@keyframes buttonPulse {
+  0% {
+    transform: scale(1);
+  }
+  100% {
+    transform: scale(1.05);
+  }
+}
+
+@keyframes buttonGlow {
+  0% {
+    opacity: 0.3;
+    filter: blur(8px);
+  }
+  100% {
+    opacity: 0.6;
+    filter: blur(12px);
+  }
 }
 
 .btn-secondary {

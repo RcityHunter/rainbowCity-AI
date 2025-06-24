@@ -55,7 +55,7 @@ const Home = () => {
       {!isDashboard && (
         <header className="landing-header">
           <div className="logo-container">
-            <div className="logo">彩虹城</div>
+            <div className="logo logo-brand">RC AI</div>
           </div>
           <nav className="main-nav">
             <ul>

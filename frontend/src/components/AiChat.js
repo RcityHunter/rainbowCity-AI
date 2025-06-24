@@ -184,6 +184,7 @@ function AiChat() {
   
   // 上传按钮悬停状态
   const [isUploadHovered, setIsUploadHovered] = useState(false);
+  const uploadContainerRef = useRef(null);
   
   // 自动滚动到最新消息
   useEffect(() => {
@@ -193,7 +194,19 @@ function AiChat() {
     scrollToBottom();
   }, [messages]);
   
-
+  // 添加全局点击事件监听器，点击上传容器外部时关闭上传选项
+  useEffect(() => {
+    const handleClickOutside = (event) => {
+      if (uploadContainerRef.current && !uploadContainerRef.current.contains(event.target) && isUploadHovered) {
+        setIsUploadHovered(false);
+      }
+    };
+    
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, [isUploadHovered]);
   
   // 检查登录状态
   useEffect(() => {
@@ -224,15 +237,17 @@ function AiChat() {
     const aiMessages = messages.filter(m => m.role === SenderRole.ASSISTANT);
     
     // 对于每个AI消息，如果它不在typingState中，则添加它
-    aiMessages.forEach(message => {
+    messages.forEach(message => {
       if (!typingState[message.id] && message.content) {
-        console.log(`发现新的AI消息，添加到打字机状态: ${message.id.substring(0, 6)}`);
+        // 先提取response内容，再初始化打字机状态
+        const extractedContent = extractResponseContent(message.content);
+        
         setTypingState(prev => ({
           ...prev,
           [message.id]: {
             isTyping: true,
             displayedContent: '',
-            fullContent: extractResponseContent(message.content)
+            fullContent: extractedContent
           }
         }));
       }
@@ -1393,26 +1408,26 @@ function AiChat() {
         
         console.log('处理后的响应内容:', responseContent);
         
-        // 创建助手消息
+        // 先提取response内容
+        const extractedContent = extractResponseContent(responseContent);
+        
+        // 创建AI消息对象，直接使用提取后的内容
         const assistantMessage = {
           id: generateUUID(),
           role: SenderRole.ASSISTANT,
-          content: responseContent,
+          content: extractedContent, // 使用提取后的内容，而不是原始responseContent
           type: responseType,
           timestamp: new Date().toISOString(),
           visible: true,             // 确保消息可见
           ...responseMetadata
         };
         
-        // 将新消息添加到打字机状态中
         setTypingState(prev => ({
           ...prev,
           [assistantMessage.id]: {
             isTyping: true,
             displayedContent: '',
-            fullContent: typeof responseContent === 'string' ? 
-              responseContent : 
-              JSON.stringify(responseContent)
+            fullContent: extractedContent
           }
         }));
         
@@ -1665,9 +1680,10 @@ const renderMessageContent = (message) => {
       if (isTypingMessage && messageTypingState && messageTypingState.displayedContent) {
         contentToShow = messageTypingState.displayedContent;
       } 
-      // 否则使用消息的完整内容，并提取response字段
+      // 否则使用消息的完整内容
       else if (message && message.content) {
-        contentToShow = extractResponseContent(message.content);
+        // 这里不需要再次提取，因为fullContent已经是提取后的内容
+        contentToShow = message.content;
       }
       
       // 确保contentToShow始终是字符串
@@ -2165,18 +2181,18 @@ const renderMessageContent = (message) => {
           <div className="input-controls">
             <div 
               className="upload-container"
-              onMouseEnter={() => setIsUploadHovered(true)}
-              onMouseLeave={() => setIsUploadHovered(false)}
+              ref={uploadContainerRef}
             >
               <button 
                 type="button" 
                 className="attachment-button"
                 disabled={isLoading}
+                onClick={() => setIsUploadHovered(!isUploadHovered)}
               >
                 <i className="attachment-icon"></i>
               </button>
               
-              {/* 悬停时显示的上传选项 */}
+              {/* 点击时显示的上传选项 */}
               <div className={`upload-options ${isUploadHovered ? 'visible' : ''}`}>
                 {/* 图片上传 */}
                 <button 
