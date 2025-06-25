@@ -4,11 +4,19 @@ AI助手主控制器
 """
 
 from typing import Dict, Any, List, Optional
-import json
 import uuid
-import time
 import logging
+import json
+import os
+import time
+from typing import Dict, Any, List, Optional
 from datetime import datetime
+
+# 导入Tavily客户端
+try:
+    from tavily import TavilyClient
+except ImportError:
+    logging.warning("Tavily客户端导入失败，搜索功能将不可用")
 
 from .context_builder import ContextBuilder
 from .llm_caller import OpenAILLMCaller
@@ -294,6 +302,99 @@ class AIAssistant:
         llm_duration = time.time() - llm_start_time
         logging.info(f"完成第一次LLM调用: session_id={session_id}, 耗时={llm_duration:.2f}秒")
         self.event_logger.log_llm_call(session_id, user_id, ai_id, messages, first_response, 1)
+        
+        # 检查AI回答是否表示不确定或无法回答
+        if not first_response.get("tool_calls"):
+            # 如果没有工具调用，检查AI回答是否表示不确定
+            initial_content = first_response.get("content", "").lower()
+            
+            # 检测AI是否表示不知道或无法回答
+            uncertainty_phrases = [
+                "我不知道", "无法提供", "没有这个信息", "无法回答", "不确定", 
+                "没有足够的信息", "知识有限", "知识库中没有", "训练数据中没有",
+                "知识库截止于", "信息可能过时", "无法获取实时信息", "无法搜索",
+                "建议您查询", "建议您搜索", "建议您查找", "无法访问互联网",
+                "抱歉", "sorry", "无法获取", "无法为您提供", "无法实时", "作为ai", "作为 ai",
+                "实时信息", "最新信息", "实时数据", "实时查询", "实时获取",
+                "天气应用程序", "气象网站", "搜索引擎"
+            ]
+            
+            logging.debug(f"检查AI回答是否包含不确定性短语: {initial_content[:100]}...")
+            
+            # 检测是否包含不确定性短语
+            matched_phrases = [phrase for phrase in uncertainty_phrases if phrase in initial_content]
+            
+            logging.debug(f"检测到的不确定性短语: {matched_phrases if matched_phrases else '无'}")
+            
+            # 如果AI表示不确定或无法回答，自动触发搜索
+            if matched_phrases:
+                logging.debug(f"AI表示不确定，检测到以下短语: {matched_phrases}")
+                logging.info("AI表示不确定，自动触发搜索")
+                
+                # 提取搜索查询
+                search_query = user_input
+                # 如果消息太长，尝试提取关键部分
+                if len(search_query) > 100:
+                    search_query = search_query[:100]
+                    
+                logging.info(f"由于AI不确定，触发搜索: '{search_query}'")
+                
+                try:
+                    # 导入Tavily客户端
+                    from tavily import TavilyClient
+                    
+                    # 从环境变量获取API密钥
+                    import os
+                    api_key = os.getenv("TAVILY_API_KEY")
+                    
+                    if api_key:
+                        # 创建Tavily客户端
+                        client_tavily = TavilyClient(api_key=api_key)
+                        
+                        # 执行搜索
+                        logging.debug(f"开始执行Tavily搜索，参数: query={search_query}, search_depth=basic, max_results=5")
+                        search_result = client_tavily.search(
+                            query=search_query,
+                            search_depth="basic",
+                            max_results=5,
+                            include_answer=True
+                        )
+                        logging.debug("Tavily搜索成功完成")
+                        
+                        # 将搜索结果添加到消息中
+                        if "answer" in search_result and search_result["answer"]:
+                            logging.debug(f"搜索结果包含答案，长度: {len(search_result['answer'])}")
+                            
+                            # 添加搜索结果作为系统消息
+                            search_message = {
+                                "role": "system",
+                                "content": f"我注意到你对这个问题不确定。根据最新的网络搜索结果，这是关于 '{search_query}' 的信息\n\n{search_result['answer']}\n\n请基于这些信息重新回答用户的问题。"
+                            }
+                            messages.append(search_message)
+                            logging.info(f"已将搜索结果添加到对话中，准备重新生成回答")
+                            
+                            # 添加搜索结果链接作为参考
+                            if "results" in search_result and search_result["results"]:
+                                sources = "\n\n数据来源:\n"
+                                for i, result in enumerate(search_result["results"][:3]):
+                                    sources += f"- {result.get('title', '无标题')}: {result.get('url', '')}\n"
+                                sources_message = {
+                                    "role": "system",
+                                    "content": f"{sources}\n请在回答中包含这些来源信息。"
+                                }
+                                messages.append(sources_message)
+                            
+                            # 重新调用LLM获取更新的回答
+                            logging.info("使用搜索结果重新调用LLM获取回答")
+                            llm_start_time = time.time()
+                            first_response = await self.llm_caller.invoke(messages)
+                            llm_duration = time.time() - llm_start_time
+                            logging.info(f"完成搜索后的LLM调用: session_id={session_id}, 耗时={llm_duration:.2f}秒")
+                            self.event_logger.log_llm_call(session_id, user_id, ai_id, messages, first_response, "search_enhanced")
+                    else:
+                        logging.error("未找到TAVILY_API_KEY环境变量，无法执行搜索")
+                except Exception as e:
+                    logging.error(f"Tavily搜索错误: {str(e)}")
         
         # 5. 检查是否有工具调用
         if first_response.get("tool_calls"):

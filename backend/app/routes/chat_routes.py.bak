@@ -10,7 +10,6 @@ import logging
 from openai import OpenAI
 import httpx
 from dotenv import load_dotenv
-from tavily import TavilyClient
 
 # 设置日志级别为 DEBUG
 logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -205,9 +204,7 @@ async def chat(request: ChatRequest):
         has_weather_terms = any(weather_term in last_user_message for weather_term in ["天气", "气温", "温度", "今天", "现在", "如何", "怎么样", "怎样"])
         logging.debug(f"包含'新加坡': {has_singapore}")
         logging.debug(f"包含天气相关词: {has_weather_terms}")
-        weather_terms_list = ["天气", "气温", "温度", "今天", "现在", "如何", "怎么样", "怎样"]
-        matched_terms = [term for term in weather_terms_list if term in last_user_message]
-        logging.debug(f"天气相关词匹配: {matched_terms}")
+        logging.debug(f"天气相关词匹配: {[term for term in ["天气", "气温", "温度", "今天", "现在", "如何", "怎么样", "怎样"] if term in last_user_message]}")
         logging.info(f"新加坡天气检测结果 - 包含新加坡: {has_singapore}, 包含天气词: {has_weather_terms}")
 
         
@@ -243,15 +240,15 @@ async def chat(request: ChatRequest):
             try:
                 # 从环境变量获取 API 密钥
                 api_key = os.getenv("TAVILY_API_KEY")
-                logging.debug(f"TAVILY_API_KEY 是否存在: {bool(api_key)}")
+                print(f"[DEBUG] TAVILY_API_KEY 是否存在: {bool(api_key)}")
                 if api_key:
                     # 创建 Tavily 客户端
                     client_tavily = TavilyClient(api_key=api_key)
                     
-                    logging.debug(f"执行天气搜索，关键词: {search_query}")
+                    print(f"[DEBUG] 执行天气搜索，关键词: {search_query}")
                     
                     # 执行搜索
-                    logging.debug(f"开始执行 Tavily 搜索，参数: query={search_query}, search_depth=advanced, max_results=5")
+                    print(f"[DEBUG] 开始执行 Tavily 搜索，参数: query={search_query}, search_depth=advanced, max_results=5")
                     try:
                         search_result = client_tavily.search(
                             query=search_query,
@@ -259,29 +256,29 @@ async def chat(request: ChatRequest):
                             max_results=5,
                             include_answer=True
                         )
-                        logging.debug("Tavily 搜索成功完成")
+                        print(f"[DEBUG] Tavily 搜索成功完成")
                     except Exception as search_error:
-                        logging.error(f"Tavily 搜索执行错误: {str(search_error)}")
+                        print(f"[ERROR] Tavily 搜索执行错误: {str(search_error)}")
                         # 重新抛出异常，让外层的异常处理捕获
                         raise search_error
                     
-                    logging.debug(f"搜索结果类型: {type(search_result)}")
+                    print(f"[DEBUG] 搜索结果类型: {type(search_result)}")
                     if isinstance(search_result, dict):
-                        logging.debug(f"搜索结果键: {search_result.keys()}")
+                        print(f"[DEBUG] 搜索结果键: {search_result.keys()}")
                         if "answer" in search_result:
-                            logging.debug(f"搜索结果 answer 前100字符: {search_result['answer'][:100]}...")
+                            print(f"[DEBUG] 搜索结果 answer 前100字符: {search_result['answer'][:100]}...")
                         else:
-                            logging.debug("搜索结果中没有 answer 键")
+                            print(f"[DEBUG] 搜索结果中没有 answer 键")
                         if "results" in search_result:
-                            logging.debug(f"搜索结果包含 {len(search_result['results'])} 个结果项")
+                            print(f"[DEBUG] 搜索结果包含 {len(search_result['results'])} 个结果项")
                         else:
-                            logging.debug("搜索结果中没有 results 键")
+                            print(f"[DEBUG] 搜索结果中没有 results 键")
                     else:
-                        logging.debug(f"搜索结果不是字典类型: {search_result}")
+                        print(f"[DEBUG] 搜索结果不是字典类型: {search_result}")
                     
                     # 将搜索结果添加到消息中
                     if "answer" in search_result and search_result["answer"]:
-                        logging.debug(f"搜索结果中包含 answer: {search_result['answer'][:100]}...")
+                        print(f"[DEBUG] 搜索结果中包含 answer: {search_result['answer'][:100]}...")
                         
                         # 根据不同城市提供相应的天气信息
                         location_name = location if location else "该地区"
@@ -292,12 +289,12 @@ async def chat(request: ChatRequest):
                             "content": f"这是{location_name}天气的最新实时搜索结果:\n\n{search_result['answer']}\n\n请直接提供这些具体的天气信息，而不是建议用户去查询其他源。一定要提供具体的温度、天气状况和预报信息。"
                         }
                         
-                        logging.debug(f"添加系统消息: {search_message['content'][:100]}...")
+                        print(f"[DEBUG] 添加系统消息: {search_message['content'][:100]}...")
                         openai_messages.append(search_message)
                         
                         # 添加搜索结果链接作为参考
                     else:
-                        logging.debug("搜索结果中不包含 answer")
+                        print(f"[DEBUG] 搜索结果中不包含 answer")
                         if "results" in search_result and search_result["results"]:
                             sources = "\n\n数据来源:\n"
                             for i, result in enumerate(search_result["results"][:3]):
@@ -308,23 +305,23 @@ async def chat(request: ChatRequest):
                             }
                             openai_messages.append(sources_message)
                             
-                        logging.debug("济南天气搜索成功，添加搜索结果到消息中")
+                        print(f"[DEBUG] 济南天气搜索成功，添加搜索结果到消息中")
             except Exception as e:
-                logging.error(f"济南天气搜索错误: {str(e)}")
+                print(f"[ERROR] 济南天气搜索错误: {str(e)}")
         
         # 检查用户消息中是否包含触发工具推荐的关键词
         elif "频率" in last_user_message or "编号" in last_user_message:
             should_recommend_tools = True
             tool_to_recommend = "frequency_generator"
-            logging.debug("检测到频率工具关键词")
+            print(f"[DEBUG] 检测到频率工具关键词")
         elif "ai" in last_user_message and ("生成" in last_user_message or "创建" in last_user_message or "id" in last_user_message):
             should_recommend_tools = True
             tool_to_recommend = "ai_id_generator"
-            logging.debug("检测到AI-ID工具关键词")
+            print(f"[DEBUG] 检测到AI-ID工具关键词")
         elif "关系" in last_user_message or "联系" in last_user_message or "relationship" in last_user_message:
             should_recommend_tools = True
             tool_to_recommend = "relationship_manager"
-            logging.debug("检测到关系管理工具关键词")
+            print(f"[DEBUG] 检测到关系管理工具关键词")
         # 扩展搜索关键词列表，增加更多天气相关关键词
         elif any(keyword in last_user_message for keyword in [
             "搜索", "查询", "查找", "最新", "新闻", "信息", "了解", "search", 
@@ -333,7 +330,7 @@ async def chat(request: ChatRequest):
         ]):
             should_recommend_tools = True
             tool_to_recommend = "web_search"
-            logging.debug("检测到搜索工具关键词，触发搜索")
+            print(f"[DEBUG] 检测到搜索工具关键词，触发搜索")
             
             # 强制处理天气相关查询，直接调用 Tavily 搜索
             # 扩展天气关键词列表，确保能捕捉各种天气相关查询
@@ -347,7 +344,7 @@ async def chat(request: ChatRequest):
             
             # 检查是否包含天气关键词
             if any(weather_term in last_user_message for weather_term in weather_terms):
-                logging.debug(f"开始处理天气查询: {last_user_message}")
+                print(f"[DEBUG] 开始处理天气查询: {last_user_message}")
                 try:
                     # 提取可能的地名
                     location = None
@@ -362,7 +359,7 @@ async def chat(request: ChatRequest):
                     for city in common_cities:
                         if city in last_user_message:
                             location = city
-                            logging.debug(f"检测到地名: {city}")
+                            print(f"[DEBUG] 检测到地名: {city}")
                             break
                     
                     # 如果没有找到具体地名，就尝试使用默认地名或整个查询
@@ -372,151 +369,68 @@ async def chat(request: ChatRequest):
                         # 如果没有找到地名，尝试从消息中提取可能的地名
                         # 首先尝试使用全部消息
                         if len(last_user_message) < 50:
-                            search_query = f"{last_user_message} 天气 实时"
-                        else:
-                            # 如果消息太长，只取前50个字符
-                            search_query = f"{last_user_message[:50]} 天气 实时"
-                    
-                    logging.debug(f"构造的天气搜索查询: {search_query}")
-                    # 这里可以添加调用天气API的代码
-                except Exception as e:
-                    logging.error(f"处理天气查询时出错: {str(e)}")
-                    # 失败时继续正常处理
 
-        # 检查是否有工具调用
-        if ai_message.tool_calls:
-            # 有工具调用，处理工具调用
-            tool_calls = []
-            for tool_call in ai_message.tool_calls:
-                tool_calls.append({
-                    "id": tool_call.id,
-                    "name": tool_call.function.name,
-                    "parameters": json.loads(tool_call.function.arguments)
-                })
+# 检查是否有工具调用
+if ai_message.tool_calls:
+    # 有工具调用，处理工具调用
+    tool_calls = []
+    for tool_call in ai_message.tool_calls:
+        tool_calls.append({
+            "id": tool_call.id,
+            "name": tool_call.function.name,
+            "parameters": json.loads(tool_call.function.arguments)
+        })
+    
+    # 处理工具调用响应
+    if "tool_calls" in ai_message:
+        tool_calls_data = ai_message.tool_calls
+        tool_responses = []
         
-        # 处理工具调用响应
-        if hasattr(ai_message, "tool_calls") and ai_message.tool_calls:
-            tool_calls_data = ai_message.tool_calls
-            tool_responses = []
-            
-            # 处理每个工具调用
-            for tool_call in tool_calls_data:
-                tool_call_id = tool_call.id
-                function_name = tool_call.function.name
-                function_args = json.loads(tool_call.function.arguments)
-                
-                # 处理天气查询结果
-                if "answer" in locals() and answer:
-                    logging.info("天气查询返回有效答案")
-                    
-                    # 添加搜索结果作为系统消息，使用更强烈的提示
-                    search_message = {
-                        "role": "system",
-                        "content": f"这是最新的实时搜索结果，关于 '{search_query}':\n\n{answer}\n\n你必须基于这些最新信息回答用户的问题。请提供具体的天气信息，而不是仅仅建议用户去查询其他源。"
-                    }
-                    openai_messages.append(search_message)
-                    logging.debug(f"添加了搜索结果到消息中")
-                    logging.info("天气搜索结果已添加到对话中")
-                    
-                    # 添加搜索结果链接作为参考
-                    if "search_result" in locals() and "results" in search_result and search_result["results"]:
-                        sources = "\n\n数据来源:\n"
-                        for i, result in enumerate(search_result["results"][:3]):
-                            sources += f"- {result.get('title', '无标题')}: {result.get('url', '')}\n"
-                        sources_message = {
-                            "role": "system",
-                            "content": f"{sources}\n请在回答中包含这些来源信息。不要仅仅建议用户去查询这些来源，而是直接提供具体的天气信息。"
-                        }
-                        openai_messages.append(sources_message)
-                        logging.debug(f"添加了来源信息到消息中")
-                    
-                    logging.debug(f"天气查询搜索成功，添加搜索结果到消息中")
-                    logging.info("天气搜索完成，数据已添加到对话中")
-            
-            # 调用OpenAI API获取响应
-            # 如果检测到搜索关键词，明确指定使用 web_search 工具
-            if tool_to_recommend == "web_search":
-                # 提取可能的搜索查询
-                search_query = last_user_message
-                # 如果消息太长，尝试提取关键部分
-                if len(search_query) > 100:
-                    search_query = search_query[:100]
-                
-                # 直接调用 Tavily API
-                try:
-                    # 从环境变量获取 API 密钥
-                    api_key = os.getenv("TAVILY_API_KEY")
-                    logging.debug(f"TAVILY_API_KEY 是否存在: {bool(api_key)}")
-                    if api_key:
-                        # 创建 Tavily 客户端
-                        client_tavily = TavilyClient(api_key=api_key)
-                        
-                        # 执行搜索
-                        logging.debug(f"执行搜索，查询: {search_query}")
-                        search_result = client_tavily.search(
-                            query=search_query,
-                            search_depth="basic",
-                            max_results=5,
-                            include_answer=True
-                        )
-                        
-                        # 将搜索结果添加到消息中
-                        if "answer" in search_result and search_result["answer"]:
-                            logging.debug(f"搜索结果中包含 answer: {search_result['answer'][:100]}...")
+        # 处理每个工具调用
+        for tool_call in tool_calls_data:
+            tool_call_id = tool_call.id
+            function_name = tool_call.function.name
+            function_args = json.loads(tool_call.function.arguments)
+                            logging.info("天气查询返回有效答案")
+                            
+                            # 添加搜索结果作为系统消息，使用更强烈的提示
                             search_message = {
                                 "role": "system",
-                                "content": f"根据最新的网络搜索结果，这是关于 '{search_query}' 的信息\n\n{search_result['answer']}\n\n请基于这些信息回答用户的问题。"
+                                "content": f"这是最新的实时搜索结果，关于 '{search_query}':\n\n{answer}\n\n你必须基于这些最新信息回答用户的问题。请提供具体的天气信息，而不是仅仅建议用户去查询其他源。"
                             }
                             openai_messages.append(search_message)
+                            logging.debug(f"添加了搜索结果到消息中")
+                            logging.info("天气搜索结果已添加到对话中")
+                            
+                            # 添加搜索结果链接作为参考
+                            if "results" in search_result and search_result["results"]:
+                                sources = "\n\n数据来源:\n"
+                                for i, result in enumerate(search_result["results"][:3]):
+                                    sources += f"- {result.get('title', '无标题')}: {result.get('url', '')}\n"
+                                sources_message = {
+                                    "role": "system",
+                                    "content": f"{sources}\n请在回答中包含这些来源信息。不要仅仅建议用户去查询这些来源，而是直接提供具体的天气信息。"
+                                }
+                                openai_messages.append(sources_message)
+                                logging.debug(f"添加了来源信息到消息中")
+                                
+                            logging.debug(f"天气查询搜索成功，添加搜索结果到消息中")
+                            logging.info("天气搜索完成，数据已添加到对话中")
                 except Exception as e:
-                    logging.error(f"Tavily 搜索错误: {str(e)}")
-            
-            # 如果不是明确的搜索请求，先让 AI 尝试回答
-            if tool_to_recommend != "web_search":
-                logging.info("不是明确的搜索请求，先让 AI 尝试回答")
-                # 首先让 AI 尝试回答问题
-                logging.debug("开始调用 OpenAI API 获取初步回答")
-                initial_response = client.chat.completions.create(
-                    model="gpt-3.5-turbo",
-                    messages=openai_messages,
-                    max_tokens=150  # 限制初始回答的长度，以加快速度
-                )
-                logging.debug("获取初步回答成功")
-                
-                initial_content = initial_response.choices[0].message.content.lower()
-                logging.debug(f"AI 初始回答: {initial_content[:100]}...")
-                
-                # 检测 AI 是否表示不知道或无法回答
-                uncertainty_phrases = [
-                    "我不知道", "无法提供", "没有这个信息", "无法回答", "不确定", 
-                    "没有足够的信息", "知识有限", "知识库中没有", "训练数据中没有",
-                    "知识库截止于", "信息可能过时", "无法获取实时信息", "无法搜索",
-                    "建议您查询", "建议您搜索", "建议您查找", "无法访问互联网",
-                    "抱歉", "sorry", "无法获取", "无法为您提供", "无法实时", "作为ai", "作为 ai",
-                    "实时信息", "最新信息", "实时数据", "实时查询", "实时获取",
-                    "天气应用程序", "气象网站", "搜索引擎"
-                ]
-                
-                logging.debug(f"检查AI回答是否包含不确定性短语: {initial_content[:100]}...")
-                
-                # 检测是否包含不确定性短语
-                matched_phrases = [phrase for phrase in uncertainty_phrases if phrase in initial_content]
-                
-                logging.debug(f"检测到的不确定性短语: {matched_phrases if matched_phrases else '无'}")                
-                
-                # 如果 AI 表示不确定或无法回答，自动触发搜索
-                if matched_phrases:
-                    logging.debug(f"AI 表示不确定，检测到以下短语: {matched_phrases}")
-                    logging.info("AI 表示不确定，自动触发搜索")
-                    
-                    # 提取搜索查询
+                    logging.error(f"天气查询搜索错误: {str(e)}")
+                    logging.error(f"天气查询异常: {type(e).__name__}")
+                    # 失败时继续正常处理
+            # 调用OpenAI API获取响应
+            try:
+                # 如果检测到搜索关键词，明确指定使用 web_search 工具
+                if tool_to_recommend == "web_search":
+                    # 提取可能的搜索查询
                     search_query = last_user_message
                     # 如果消息太长，尝试提取关键部分
                     if len(search_query) > 100:
                         search_query = search_query[:100]
-                        
-                    logging.info(f"由于AI不确定，触发搜索: '{search_query}'")
                     
+                    # 直接调用 Tavily API
                     try:
                         # 从环境变量获取 API 密钥
                         api_key = os.getenv("TAVILY_API_KEY")
@@ -525,25 +439,21 @@ async def chat(request: ChatRequest):
                             client_tavily = TavilyClient(api_key=api_key)
                             
                             # 执行搜索
-                            logging.debug(f"开始执行 Tavily 搜索，参数: query={search_query}, search_depth=basic, max_results=5")
                             search_result = client_tavily.search(
                                 query=search_query,
                                 search_depth="basic",
                                 max_results=5,
                                 include_answer=True
                             )
-                            logging.debug("Tavily 搜索成功完成")
                             
                             # 将搜索结果添加到消息中
                             if "answer" in search_result and search_result["answer"]:
-                                logging.debug(f"搜索结果包含答案，长度: {len(search_result['answer'])}")
                                 # 添加搜索结果作为系统消息
                                 search_message = {
                                     "role": "system",
-                                    "content": f"我注意到你对这个问题不确定。根据最新的网络搜索结果，这是关于 '{search_query}' 的信息\n\n{search_result['answer']}\n\n请基于这些信息重新回答用户的问题。"
+                                    "content": f"根据最新的网络搜索结果，这是关于 '{search_query}' 的信息\n\n{search_result['answer']}\n\n请基于这些信息回答用户的问题。"
                                 }
                                 openai_messages.append(search_message)
-                                logging.info(f"已将搜索结果添加到对话中，准备重新生成回答")
                                 
                                 # 添加搜索结果链接作为参考
                                 if "results" in search_result and search_result["results"]:
@@ -557,30 +467,103 @@ async def chat(request: ChatRequest):
                                     openai_messages.append(sources_message)
                                     
                                 # 打印调试信息
-                                logging.info("AI 不确定，自动触发 Tavily 搜索成功")
+                                print(f"Tavily 搜索成功，添加搜索结果到消息中")
                     except Exception as e:
-                        logging.error(f"AI 不确定时的 Tavily 搜索错误: {str(e)}")
+                        print(f"Tavily 搜索错误: {str(e)}")
                 
-                try:
-                    # 调用 OpenAI API 获取最终响应
-                    logging.debug(f"准备调用 OpenAI API 获取最终响应，消息数量: {len(openai_messages)}")
-                    response = client.chat.completions.create(
+                # 如果不是明确的搜索请求，先让 AI 尝试回答
+                if tool_to_recommend != "web_search":
+                    # 首先让 AI 尝试回答问题
+                    initial_response = client.chat.completions.create(
                         model="gpt-3.5-turbo",
                         messages=openai_messages,
-                        tools=AVAILABLE_TOOLS,
-                        tool_choice="auto"
+                        max_tokens=150  # 限制初始回答的长度，以加快速度
                     )
-                    logging.debug("OpenAI API 调用成功完成")
-                except Exception as api_error:
-                    # 如果出现错误，尝试不使用tools参数
-                    logging.error(f"API调用出错，尝试不使用tools参数: {str(api_error)}")
-                    response = client.chat.completions.create(
-                        model="gpt-3.5-turbo",
-                        messages=openai_messages
-                    )
+                    
+                    initial_content = initial_response.choices[0].message.content.lower()
+                    print(f"[DEBUG] AI 初始回答: {initial_content[:100]}...")
+                    
+                    # 检测 AI 是否表示不知道或无法回答
+                    uncertainty_phrases = [
+                        "我不知道", "无法提供", "没有这个信息", "无法回答", "不确定", 
+                        "没有足够的信息", "知识有限", "知识库中没有", "训练数据中没有",
+                        "知识库截止于", "信息可能过时", "无法获取实时信息", "无法搜索",
+                        "建议您查询", "建议您搜索", "建议您查找", "无法访问互联网",
+                        "抱歉", "sorry", "无法获取", "无法为您提供", "无法实时", "作为ai", "作为 ai",
+                        "实时信息", "最新信息", "实时数据", "实时查询", "实时获取"
+                    ]
+                    
+                    # 检测是否包含不确定性短语
+                    matched_phrases = [phrase for phrase in uncertainty_phrases if phrase in initial_content]
+                    
+                    # 如果 AI 表示不确定或无法回答，自动触发搜索
+                    if matched_phrases:
+                        print(f"[DEBUG] AI 表示不确定，检测到以下短语: {matched_phrases}")
+                        print(f"AI 表示不确定，自动触发搜索")
+                        
+                        # 提取搜索查询
+                        search_query = last_user_message
+                        # 如果消息太长，尝试提取关键部分
+                        if len(search_query) > 100:
+                            search_query = search_query[:100]
+                        
+                        try:
+                            # 从环境变量获取 API 密钥
+                            api_key = os.getenv("TAVILY_API_KEY")
+                            if api_key:
+                                # 创建 Tavily 客户端
+                                client_tavily = TavilyClient(api_key=api_key)
+                                
+                                # 执行搜索
+                                search_result = client_tavily.search(
+                                    query=search_query,
+                                    search_depth="basic",
+                                    max_results=5,
+                                    include_answer=True
+                                )
+                                
+                                # 将搜索结果添加到消息中
+                                if "answer" in search_result and search_result["answer"]:
+                                    # 添加搜索结果作为系统消息
+                                    search_message = {
+                                        "role": "system",
+                                        "content": f"我注意到你对这个问题不确定。根据最新的网络搜索结果，这是关于 '{search_query}' 的信息\n\n{search_result['answer']}\n\n请基于这些信息重新回答用户的问题。"
+                                    }
+                                    openai_messages.append(search_message)
+                                    
+                                    # 添加搜索结果链接作为参考
+                                    if "results" in search_result and search_result["results"]:
+                                        sources = "\n\n数据来源:\n"
+                                        for i, result in enumerate(search_result["results"][:3]):
+                                            sources += f"- {result.get('title', '无标题')}: {result.get('url', '')}\n"
+                                        sources_message = {
+                                            "role": "system",
+                                            "content": f"{sources}\n请在回答中包含这些来源信息。"
+                                        }
+                                        openai_messages.append(sources_message)
+                                        
+                                    # 打印调试信息
+                                    print(f"AI 不确定，自动触发 Tavily 搜索成功")
+                        except Exception as e:
+                            print(f"AI 不确定时的 Tavily 搜索错误: {str(e)}")
                 
-                # 处理响应
-                ai_message = response.choices[0].message
+                # 调用 OpenAI API 获取最终响应
+                response = client.chat.completions.create(
+                    model="gpt-3.5-turbo",
+                    messages=openai_messages,
+                    tools=AVAILABLE_TOOLS,
+                    tool_choice="auto"
+                )
+            except Exception as api_error:
+                # 如果出现错误，尝试不使用tools参数
+                print(f"API调用出错，尝试不使用tools参数: {str(api_error)}")
+                response = client.chat.completions.create(
+                    model="gpt-3.5-turbo",
+                    messages=openai_messages
+                )
+            
+            # 处理响应
+            ai_message = response.choices[0].message
             
             # 检查是否有工具调用
             if ai_message.tool_calls:
@@ -721,7 +704,7 @@ async def chat(request: ChatRequest):
             }
             
     except Exception as e:
-        logging.error(f"Error in chat endpoint: {str(e)}")
+        print(f"Error in chat endpoint: {str(e)}")
         raise HTTPException(status_code=500, detail=f"聊天处理失败: {str(e)}")
 
 # 健康检查端点
@@ -1047,7 +1030,7 @@ async def chat_simple(request: ChatRequest):
                                     for i, result in enumerate(search_result["results"][:3]):
                                         response += f"- {result.get('title', '无标题')}: {result.get('url', '')}\n"
                     except Exception as e:
-                        logging.error(f"Tavily 搜索错误: {str(e)}")
+                        print(f"Tavily 搜索错误: {str(e)}")
                         # 搜索失败时不替换原来的响应
                 
                 response_data["tool_calls"] = [tool_call]

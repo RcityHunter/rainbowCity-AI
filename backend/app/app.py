@@ -122,6 +122,7 @@ from .routes.conversation_routes import router as conversation_router
 from .routes.chat_history_routes import router as chat_history_router
 from .routes.chat_sessions_routes import router as chat_sessions_router
 from .routes.oauth_routes import router as oauth_router
+from .routes.search_routes import router as search_router
 
 # 所有路由模块已经迁移到 FastAPI
 # 所有路由文件已经重命名，移除了 _fastapi 后缀
@@ -142,6 +143,7 @@ api_router.include_router(conversation_router)
 api_router.include_router(chat_history_router)
 api_router.include_router(chat_sessions_router)
 api_router.include_router(oauth_router)
+api_router.include_router(search_router)
 
 # 将主路由器注册到应用
 app.include_router(api_router)
