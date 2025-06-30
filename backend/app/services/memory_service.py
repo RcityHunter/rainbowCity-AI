@@ -4,14 +4,16 @@
 
 import logging
 import uuid
+import asyncio
 from datetime import datetime
-from typing import Dict, Any, List, Optional, Union
+from typing import Dict, Any, List, Optional, Union, Tuple
 
 from app.db import query, create, update, delete
 from app.models.memory_models import (
     MemoryType, MemoryImportance, ChatHistoryMemory,
     UserMemory, SessionSummary, MemoryQuery
 )
+from app.services.embedding_service import embedding_service
 
 
 class MemoryService:
@@ -22,7 +24,8 @@ class MemoryService:
         session_id: str,
         user_id: str,
         messages: List[Dict[str, Any]],
-        metadata: Optional[Dict[str, Any]] = None
+        metadata: Optional[Dict[str, Any]] = None,
+        generate_embedding: bool = True
     ) -> Dict[str, Any]:
         """
         保存聊天历史记忆（第一层）
@@ -49,7 +52,8 @@ class MemoryService:
                 "created_at": current_time,
                 "updated_at": current_time,
                 "metadata": metadata or {},
-                "memory_type": MemoryType.CHAT_HISTORY
+                "memory_type": MemoryType.CHAT_HISTORY,
+                "embedding": None  # 先设为None，稍后生成
             }
             
             # 查询是否已存在该会话的聊天历史
@@ -81,7 +85,8 @@ class MemoryService:
         memory_type: str,
         importance: MemoryImportance = MemoryImportance.MEDIUM,
         source_session_id: Optional[str] = None,
-        metadata: Optional[Dict[str, Any]] = None
+        metadata: Optional[Dict[str, Any]] = None,
+        generate_embedding: bool = True
     ) -> Dict[str, Any]:
         """
         保存用户记忆（第二层）
@@ -114,11 +119,23 @@ class MemoryService:
                 "last_accessed": current_time,
                 "access_count": 1,
                 "metadata": metadata or {},
-                "memory_type": MemoryType.USER_MEMORY
+                "memory_type": MemoryType.USER_MEMORY,
+                "embedding": None  # 先设为None，稍后生成
             }
             
             # 创建新记录
             result = await create('memory', memory_data)
+            
+            # 如果需要生成嵌入，异步处理
+            if generate_embedding and content:
+                # 创建异步任务生成嵌入，但不等待它完成
+                asyncio.create_task(
+                    embedding_service.update_memory_embedding(
+                        memory_id=memory_data["id"],
+                        memory_type=MemoryType.USER_MEMORY,
+                        text=content
+                    )
+                )
                 
             return result or memory_data
         except Exception as e:
@@ -135,7 +152,8 @@ class MemoryService:
         end_time: str,
         topics: List[str] = None,
         key_points: List[str] = None,
-        metadata: Optional[Dict[str, Any]] = None
+        metadata: Optional[Dict[str, Any]] = None,
+        generate_embedding: bool = True
     ) -> Dict[str, Any]:
         """
         保存会话摘要（第三层）
@@ -169,7 +187,8 @@ class MemoryService:
                 "key_points": key_points or [],
                 "created_at": current_time,
                 "metadata": metadata or {},
-                "memory_type": MemoryType.SESSION_SUMMARY
+                "memory_type": MemoryType.SESSION_SUMMARY,
+                "embedding": None  # 先设为None，稍后生成
             }
             
             # 查询是否已存在该会话的摘要
@@ -332,6 +351,14 @@ class MemoryService:
         Returns:
             匹配的记忆列表
         """
+        # 如果启用了向量搜索但没有提供嵌入，则生成嵌入
+        if query_params.use_vector_search and not query_params.embedding and query_params.query:
+            try:
+                query_params.embedding = await embedding_service.generate_embedding(query_params.query)
+            except Exception as e:
+                logging.error(f"为查询生成嵌入失败: {str(e)}")
+                # 如果生成嵌入失败，回退到关键词搜索
+                query_params.use_vector_search = False
         try:
             # 构建基本查询条件
             db_query = {'user_id': query_params.user_id}
@@ -376,19 +403,88 @@ class MemoryService:
                 logging.error(f"数据库查询错误: {str(db_error)}")
                 return []  # 查询错误时返回空结果
             
-            # 如果是相关性排序，需要进一步处理
-            if query_params.sort_by == "relevance" and query_params.query:
-                # 这里应该调用向量搜索或其他相关性搜索方法
-                # 简单实现：根据内容匹配度排序
+            # 如果使用向量搜索且有嵌入
+            if query_params.use_vector_search and query_params.embedding:
                 try:
-                    results = sorted(
-                        results,
-                        key=lambda x: _calculate_relevance(x, query_params.query),
-                        reverse=True
-                    )
-                except Exception as sort_error:
-                    logging.error(f"相关性排序错误: {str(sort_error)}")
-                    # 排序错误时，返回未排序的结果
+                    # 确定要搜索的记忆类型
+                    memory_type = query_params.memory_type.value if query_params.memory_type else None
+                    
+                    # 如果指定了记忆类型，只在该类型中搜索
+                    if memory_type:
+                        # 执行向量搜索
+                        similar_memories = await embedding_service.search_similar(
+                            memory_type=memory_type,
+                            query_embedding=query_params.embedding,
+                            k=query_params.limit
+                        )
+                        
+                        # 获取搜索结果的完整记忆数据
+                        if similar_memories:
+                            memory_ids = [mem_id for mem_id, _ in similar_memories]
+                            vector_results = []
+                            
+                            # 获取每个记忆的完整数据
+                            for memory_id in memory_ids:
+                                memory_data = await query('memory', {'id': memory_id})
+                                if memory_data:
+                                    vector_results.append(memory_data[0])
+                            
+                            # 替换结果集
+                            if vector_results:
+                                results = vector_results
+                    else:
+                        # 在所有记忆类型中搜索
+                        all_similar_memories = []
+                        for mem_type in [MemoryType.USER_MEMORY, MemoryType.CHAT_HISTORY, MemoryType.SESSION_SUMMARY]:
+                            similar = await embedding_service.search_similar(
+                                memory_type=mem_type.value,
+                                query_embedding=query_params.embedding,
+                                k=query_params.limit
+                            )
+                            all_similar_memories.extend(similar)
+                        
+                        # 按相似度排序并限制数量
+                        all_similar_memories.sort(key=lambda x: x[1], reverse=True)
+                        all_similar_memories = all_similar_memories[:query_params.limit]
+                        
+                        # 获取搜索结果的完整记忆数据
+                        if all_similar_memories:
+                            memory_ids = [mem_id for mem_id, _ in all_similar_memories]
+                            vector_results = []
+                            
+                            # 获取每个记忆的完整数据
+                            for memory_id in memory_ids:
+                                memory_data = await query('memory', {'id': memory_id})
+                                if memory_data:
+                                    vector_results.append(memory_data[0])
+                            
+                            # 替换结果集
+                            if vector_results:
+                                results = vector_results
+                except Exception as vector_error:
+                    logging.error(f"向量搜索失败: {str(vector_error)}")
+                    # 向量搜索失败时，回退到传统搜索方法
+            
+            # 如果没有使用向量搜索或向量搜索失败，使用传统排序方法
+            if not query_params.use_vector_search or query_params.sort_by != "vector":
+                # 根据排序方式排序
+                if query_params.sort_by == "recency":
+                    # 按创建时间排序
+                    results = sorted(results, key=lambda x: x.get('created_at', ''), reverse=True)
+                elif query_params.sort_by == "importance":
+                    # 按重要性排序
+                    results = sorted(results, key=lambda x: x.get('importance', 0), reverse=True)
+                elif query_params.sort_by == "relevance":
+                    # 按相关性排序（关键词匹配）
+                    try:
+                        results = sorted(
+                            results,
+                            key=lambda x: _calculate_relevance(x, query_params.query),
+                            reverse=True
+                        )
+                    except Exception as sort_error:
+                        logging.error(f"相关性排序错误: {str(sort_error)}")
+                        # 排序错误时，返回未排序的结果
             
             # 更新访问时间和计数 - 使用异步任务处理，不阻塞主流程
             async def update_memory_access(memory):

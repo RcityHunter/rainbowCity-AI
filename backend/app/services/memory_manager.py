@@ -3,13 +3,15 @@
 """
 
 import logging
+import asyncio
 import json
-from typing import Dict, Any, List, Optional, Tuple
+from typing import List, Dict, Any, Optional, Tuple, Set
 from datetime import datetime
 
-from app.models.memory_models import MemoryImportance, MemoryType
 from app.services.memory_service import MemoryService
-from app.services.llm_service import LLMService  # 假设已经存在LLM服务
+from app.services.llm_service import LLMService
+from app.services.embedding_service import embedding_service
+from app.models.memory_models import MemoryType, MemoryQuery
 
 
 class MemoryManager:
@@ -64,9 +66,9 @@ class MemoryManager:
             # 2. 提取用户记忆（第二层）
             if extract_memories and len(messages) >= 2:  # 至少需要一问一答
                 extracted_memories = await self.extract_user_memories(
+                    messages=messages,
                     user_id=user_id,
-                    session_id=session_id,
-                    messages=messages
+                    session_id=session_id
                 )
                 result["memories_extracted"] = bool(extracted_memories)
                 result["extracted_memories_count"] = len(extracted_memories)
@@ -74,9 +76,9 @@ class MemoryManager:
             # 3. 生成会话摘要（第三层）
             if generate_summary and len(messages) >= 5:  # 只有当对话足够长时才生成摘要
                 summary = await self.generate_session_summary(
-                    session_id=session_id,
+                    messages=messages,
                     user_id=user_id,
-                    messages=messages
+                    session_id=session_id
                 )
                 result["summary_generated"] = bool(summary)
                 
@@ -87,26 +89,31 @@ class MemoryManager:
             
     async def extract_user_memories(
         self,
+        messages: List[Dict[str, Any]],
         user_id: str,
-        session_id: str,
-        messages: List[Dict[str, Any]]
+        session_id: str
     ) -> List[Dict[str, Any]]:
         """
         从对话中提取用户记忆
         
         Args:
+            messages: 对话消息列表
             user_id: 用户ID
             session_id: 会话ID
-            messages: 消息列表
             
         Returns:
             提取的记忆列表
         """
-        extracted_memories = []
-        
         try:
-            # 准备提示词，要求LLM从对话中提取重要信息
-            prompt = self._create_memory_extraction_prompt(messages)
+            # 准备对话历史文本
+            conversation_text = self._prepare_conversation_text(messages)
+            
+            # 如果对话太短，不提取记忆
+            if len(conversation_text.split()) < 20:  # 简单判断是否有足够的内容
+                return []
+            
+            # 构建提取记忆的提示
+            prompt = self._build_memory_extraction_prompt(conversation_text)
             
             # 调用LLM提取记忆
             llm_response = await self.llm_service.generate_text(prompt)
@@ -115,88 +122,125 @@ class MemoryManager:
             memories = self._parse_memory_extraction_response(llm_response)
             
             # 保存提取的记忆
+            saved_memories = []
             for memory in memories:
-                saved_memory = await MemoryService.save_user_memory(
-                    user_id=user_id,
-                    content=memory["content"],
-                    memory_type=memory["type"],
-                    importance=memory["importance"],
-                    source_session_id=session_id,
-                    metadata={"extracted": True, "confidence": memory.get("confidence", 0.8)}
-                )
-                
-                if saved_memory:
-                    extracted_memories.append(saved_memory)
-                    
-            return extracted_memories
+                try:
+                    # 保存用户记忆（自动生成向量嵌入）
+                    saved_memory = await MemoryService.save_user_memory(
+                        user_id=user_id,
+                        content=memory['content'],
+                        memory_type=memory['type'],
+                        importance=memory['importance'],
+                        source_session_id=session_id,
+                        metadata={"extracted": True, "confidence": memory.get('confidence', 0.5)},
+                        generate_embedding=True
+                    )
+                    saved_memories.append(saved_memory)
+                except Exception as save_error:
+                    logging.error(f"保存提取的记忆失败: {str(save_error)}")
+            
+            return saved_memories
         except Exception as e:
             logging.error(f"提取用户记忆失败: {str(e)}")
             return []
             
     async def generate_session_summary(
         self,
-        session_id: str,
+        messages: List[Dict[str, Any]],
         user_id: str,
-        messages: List[Dict[str, Any]]
+        session_id: str
     ) -> Optional[Dict[str, Any]]:
         """
         生成会话摘要
         
         Args:
-            session_id: 会话ID
+            messages: 对话消息列表
             user_id: 用户ID
-            messages: 消息列表
+            session_id: 会话ID
             
         Returns:
-            生成的会话摘要
+            会话摘要或None（如果生成失败）
         """
         try:
-            # 准备提示词，要求LLM生成对话摘要
-            prompt = self._create_summary_generation_prompt(messages)
+            # 准备对话历史文本
+            conversation_text = self._prepare_conversation_text(messages)
+            
+            # 如果对话太短，不生成摘要
+            if len(conversation_text.split()) < 30:  # 简单判断是否有足够的内容
+                return None
+            
+            # 构建生成摘要的提示
+            prompt = self._build_summary_generation_prompt(conversation_text)
             
             # 调用LLM生成摘要
             llm_response = await self.llm_service.generate_text(prompt)
             
             # 解析LLM响应
-            summary_data = self._parse_summary_generation_response(llm_response)
+            summary_data = self._parse_summary_response(llm_response)
             
-            # 获取会话的时间范围
-            start_time = messages[0].get("timestamp", datetime.now().isoformat())
-            end_time = messages[-1].get("timestamp", datetime.now().isoformat())
+            if not summary_data or 'summary' not in summary_data:
+                logging.error("生成的摘要数据无效")
+                return None
             
-            # 保存会话摘要
+            # 获取当前时间作为结束时间
+            end_time = datetime.now().isoformat()
+            
+            # 获取第一条消息的时间作为开始时间
+            start_time = None
+            for msg in messages:
+                if msg.get('timestamp'):
+                    start_time = msg['timestamp']
+                    break
+            
+            if not start_time:
+                start_time = end_time  # 如果没有找到开始时间，使用结束时间
+            
+            # 保存会话摘要（自动生成向量嵌入）
             saved_summary = await MemoryService.save_session_summary(
                 session_id=session_id,
                 user_id=user_id,
-                summary=summary_data["summary"],
+                summary=summary_data['summary'],
                 start_time=start_time,
                 end_time=end_time,
-                topics=summary_data.get("topics", []),
-                key_points=summary_data.get("key_points", [])
+                topics=summary_data.get('topics', []),
+                key_points=summary_data.get('key_points', []),
+                metadata={"generated": True},
+                generate_embedding=True
             )
-                
+            
             return saved_summary
         except Exception as e:
             logging.error(f"生成会话摘要失败: {str(e)}")
             return None
             
-    def _create_memory_extraction_prompt(self, messages: List[Dict[str, Any]]) -> str:
+    def _prepare_conversation_text(self, messages: List[Dict[str, Any]]) -> str:
         """
-        创建记忆提取提示词
+        准备对话历史文本
         
         Args:
             messages: 消息列表
             
         Returns:
-            提示词
+            对话历史文本
         """
-        # 将消息转换为对话格式
-        conversation = ""
+        conversation_text = ""
         for msg in messages:
             role = msg.get("role", "unknown")
             content = msg.get("content", "")
-            conversation += f"{role.capitalize()}: {content}\n\n"
+            conversation_text += f"{role.capitalize()}: {content}\n\n"
+        
+        return conversation_text
+        
+    def _build_memory_extraction_prompt(self, conversation_text: str) -> str:
+        """
+        构建提取记忆的提示
+        
+        Args:
+            conversation_text: 对话历史文本
             
+        Returns:
+            提取记忆的提示
+        """
         prompt = f"""
         请分析以下对话，提取关于用户的重要信息，包括但不限于：
         1. 个人信息（姓名、职业、兴趣爱好等）
@@ -206,7 +250,7 @@ class MemoryManager:
         5. 计划或意图
         
         对话内容：
-        {conversation}
+        {conversation_text}
         
         请以JSON格式返回提取的记忆，每条记忆包含以下字段：
         - content: 记忆内容
@@ -278,7 +322,7 @@ class MemoryManager:
                 elif importance > 4:
                     importance = 4
                     
-                memory["importance"] = MemoryImportance(importance)
+                memory["importance"] = importance
                 
                 # 规范化置信度
                 confidence = memory.get("confidence", 0.8)
@@ -296,28 +340,21 @@ class MemoryManager:
             logging.error(f"解析记忆提取响应失败: {str(e)}")
             return []
             
-    def _create_summary_generation_prompt(self, messages: List[Dict[str, Any]]) -> str:
+    def _build_summary_generation_prompt(self, conversation_text: str) -> str:
         """
-        创建摘要生成提示词
+        构建生成摘要的提示
         
         Args:
-            messages: 消息列表
+            conversation_text: 对话历史文本
             
         Returns:
-            提示词
+            生成摘要的提示
         """
-        # 将消息转换为对话格式
-        conversation = ""
-        for msg in messages:
-            role = msg.get("role", "unknown")
-            content = msg.get("content", "")
-            conversation += f"{role.capitalize()}: {content}\n\n"
-            
         prompt = f"""
         请为以下对话生成一个简洁的摘要，并提取主要讨论的话题和关键点。
         
         对话内容：
-        {conversation}
+        {conversation_text}
         
         请以JSON格式返回，包含以下字段：
         - summary: 对话的简洁摘要（100-200字）
@@ -343,7 +380,7 @@ class MemoryManager:
         
         return prompt
         
-    def _parse_summary_generation_response(self, response: str) -> Dict[str, Any]:
+    def _parse_summary_response(self, response: str) -> Dict[str, Any]:
         """
         解析摘要生成响应
         
@@ -389,33 +426,43 @@ class MemoryManager:
                 "key_points": []
             }
             
-    async def retrieve_relevant_memories(
+    async def get_relevant_memories(
         self,
-        user_id: str,
         query: str,
-        limit: int = 5
+        user_id: str,
+        limit: int = 5,
+        use_vector_search: bool = True
     ) -> List[Dict[str, Any]]:
         """
-        检索与查询相关的记忆
+        获取与查询相关的记忆
         
         Args:
+            query: 查询文本
             user_id: 用户ID
-            query: 查询内容
-            limit: 限制返回的记忆数量
+            limit: 返回结果数量限制
+            use_vector_search: 是否使用向量搜索
             
         Returns:
             相关记忆列表
         """
         try:
-            # 导入MemoryQuery模型
-            from ..models.memory_models import MemoryQuery
+            # 生成查询的向量嵌入
+            query_embedding = None
+            if use_vector_search:
+                try:
+                    query_embedding = await embedding_service.generate_embedding(query)
+                except Exception as e:
+                    logging.error(f"生成查询嵌入失败: {str(e)}")
+                    use_vector_search = False
             
-            # 创建记忆查询对象
+            # 构建记忆查询
             memory_query = MemoryQuery(
                 user_id=user_id,
                 query=query,
                 limit=limit,
-                sort_by="relevance"
+                sort_by="vector" if use_vector_search else "relevance",
+                use_vector_search=use_vector_search,
+                embedding=query_embedding
             )
             
             # 搜索记忆
@@ -423,5 +470,5 @@ class MemoryManager:
             
             return memories
         except Exception as e:
-            logging.error(f"检索相关记忆失败: {str(e)}")
+            logging.error(f"获取相关记忆失败: {str(e)}")
             return []

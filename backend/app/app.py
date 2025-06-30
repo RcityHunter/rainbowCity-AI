@@ -11,6 +11,10 @@ import gc
 from dotenv import load_dotenv
 from .db import init_db_connection, close_db
 
+# 设置向量嵌入模型环境变量（如果未设置）
+if not os.getenv('EMBEDDING_MODEL'):
+    os.environ['EMBEDDING_MODEL'] = 'all-MiniLM-L6-v2'  # 默认使用轻量级模型
+
 # 设置日志级别
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -47,6 +51,16 @@ async def validation_exception_handler(request, exc):
 async def startup_db_client():
     await init_db_connection()
     print("Database connection initialized on startup")
+    
+    # 初始化向量存储
+    from .services.initialize_vector_storage import initialize_vector_storage
+    try:
+        print("开始初始化向量存储...")
+        await initialize_vector_storage()
+        print("向量存储初始化完成")
+    except Exception as e:
+        print(f"向量存储初始化失败: {str(e)}")
+        logging.error(f"向量存储初始化失败: {str(e)}")
 
 @app.on_event("shutdown")
 async def shutdown_db_client():
