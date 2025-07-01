@@ -14,7 +14,7 @@ from app.utils.oauth_utils import (
     get_github_user_info
 )
 from app.utils.auth_utils import create_access_token, get_password_hash
-from app.db import query, create, update as db_update
+from app.db import query, create, update as db_update, USE_MOCK_MODE
 
 # 设置日志记录
 logging.basicConfig(level=logging.INFO)
@@ -47,21 +47,46 @@ async def github_auth(state: str = None):
         logger.error(f"Error generating GitHub auth URL: {str(e)}")
         raise HTTPException(status_code=500, detail="Failed to generate GitHub auth URL")
 
+@router.get("/google/callback")
 @router.post("/google/callback")
 async def google_callback(request: Request):
     """
-    处理Google OAuth回调
+    处理Google OAuth回调 - 同时支持GET和POST请求
     """
-    # 尝试从请求体或查询参数获取 code
-    try:
-        body = await request.json()
-        code = body.get("code")
-    except:
-        # 如果请求体解析失败，尝试从查询参数获取
-        query_params = request.query_params
+    logger.info(f"Received Google OAuth callback - Method: {request.method}")
+    
+    # 尝试从不同来源获取授权码
+    code = None
+    
+    # 1. 尝试从查询参数获取（GET请求常用）
+    query_params = request.query_params
+    if "code" in query_params:
         code = query_params.get("code")
+        logger.info("Found authorization code in query parameters")
+    
+    # 2. 如果查询参数中没有授权码，尝试从请求体获取（POST请求常用）
+    if not code and request.method == "POST":
+        try:
+            body = await request.json()
+            if "code" in body:
+                code = body.get("code")
+                logger.info("Found authorization code in request body (JSON)")
+        except:
+            # 如果JSON解析失败，尝试表单数据
+            try:
+                form_data = await request.form()
+                if "code" in form_data:
+                    code = form_data.get("code")
+                    logger.info("Found authorization code in form data")
+            except:
+                logger.error("Failed to parse request body as JSON or form data")
+    
+    # 记录收到的完整请求信息（便于调试）
+    logger.info(f"Request headers: {request.headers}")
+    logger.info(f"Query params: {request.query_params}")
     
     if not code:
+        logger.error("No authorization code found in request")
         raise HTTPException(status_code=400, detail="Authorization code is required")
     
     try:
@@ -70,9 +95,12 @@ async def google_callback(request: Request):
         
         # 获取访问令牌
         token_data = await get_google_token(code)
-        if not token_data or "access_token" not in token_data:
-            logger.error("Failed to get Google access token")
-            raise HTTPException(status_code=400, detail="Failed to get access token")
+        if not token_data:
+            logger.error("Failed to get Google access token - token_data is None")
+            raise HTTPException(status_code=400, detail="Failed to get access token - no response from Google")
+        if "access_token" not in token_data:
+            logger.error(f"Failed to get Google access token - missing access_token in response: {token_data}")
+            raise HTTPException(status_code=400, detail="Failed to get access token - invalid response from Google")
             
         access_token = token_data["access_token"]
         logger.info("Successfully obtained Google access token")
@@ -115,7 +143,7 @@ async def google_callback(request: Request):
         else:
             # 创建新用户
             user_id = str(uuid.uuid4())
-            username = f"google_{user_info.get('sub')[-8:]}"
+            username = f"google_{user_info.get('sub')[-8:] if user_info.get('sub') else 'user'}"
             display_name = user_info.get('name', username)
             
             logger.info(f"Creating new user with ID: {user_id}, username: {username}")
@@ -127,9 +155,9 @@ async def google_callback(request: Request):
             # 准备OAuth信息
             oauth_info = {
                 'google': {
-                    'id': user_info.get('sub'),
-                    'name': user_info.get('name'),
-                    'picture': user_info.get('picture'),
+                    'id': user_info.get('sub', 'mock_id'),
+                    'name': user_info.get('name', display_name),
+                    'picture': user_info.get('picture', ''),
                     'last_login': datetime.utcnow().isoformat(),
                     'access_token': access_token
                 }
@@ -151,8 +179,18 @@ async def google_callback(request: Request):
                 'oauth_provider': 'google'
             }
             
-            await create('users', user)
+            # 在模拟模式下，手动存储用户数据
+            created_user = await create('users', user)
             logger.info(f"Created new user with ID: {user_id}")
+            
+            # 在模拟模式下，将用户对象保存到内存中以便于后续查询
+            if USE_MOCK_MODE:
+                # 将创建的用户对象保存到全局变量中
+                if not hasattr(globals(), 'mock_users'):
+                    globals()['mock_users'] = {}
+                globals()['mock_users'][user_id] = user
+                globals()['mock_users'][email] = user  # 也以邮箱为键保存一份
+                logger.info(f"Stored user in mock storage with ID: {user_id} and email: {email}")
             
         # 创建访问令牌
         token_data = {"sub": f"users:{user_id}"}

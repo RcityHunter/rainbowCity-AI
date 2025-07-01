@@ -8,11 +8,11 @@ import logging
 # 加载环境变量
 load_dotenv()
 
-# 是否启用数据库 - 现在尝试启用数据库连接
-ENABLE_DB = True  # 尝试启用数据库连接
+# 是否启用数据库 - 由于连接问题，暂时完全禁用数据库连接
+ENABLE_DB = False  # 禁用数据库连接
 
-# 是否使用模拟模式 - 作为备用方案
-USE_MOCK_MODE = False  # 如果连接失败会自动切换到模拟模式
+# 是否使用模拟模式 - 从环境变量获取，默认为False
+USE_MOCK_MODE = os.getenv('USE_MOCK_MODE', 'False').lower() == 'true'
 
 # SurrealDB配置
 SURREAL_URL = os.getenv('SURREAL_URL', 'ws://localhost:8080')
@@ -34,6 +34,11 @@ _connection_retry_delay = 2  # 秒
 _db_pool = {}
 _db_pool_lock = asyncio.Lock()
 
+# 模拟数据库存储
+_mock_db = {
+    'users': {}
+}
+
 # 检查连接是否可用
 async def is_connection_alive():
     """检查数据库连接是否正常"""
@@ -51,7 +56,7 @@ async def is_connection_alive():
 # 初始化数据库连接
 async def init_db_connection():
     """初始化数据库连接"""
-    global _db, _connection_attempts
+    global _db, _connection_attempts, USE_MOCK_MODE
     
     # 如果数据库被禁用或使用模拟模式，直接返回None
     if not ENABLE_DB or USE_MOCK_MODE:
@@ -93,21 +98,29 @@ async def init_db_connection():
             try:
                 # 尝试不同的连接方式，考虑到Docker容器内部使用8000端口而映射到8080
                 
-                # 方式1: 使用映射的主机端口（外部访问）
-                host_url = "ws://localhost:8080/rpc"
-                logging.info(f"尝试连接到主机端口URL: {host_url}")
-                await _db.connect(host_url)
-                
-                # 方式2: 如果方式1失败，尝试使用HTTP URL
-                if not await is_connection_alive():
-                    http_url = "http://localhost:8080/sql"
-                    logging.info(f"尝试连接到HTTP URL: {http_url}")
-                    await _db.connect(http_url)
+                # 直接使用硬编码的URL而不是变量，避免NoneType错误
+                try:
+                    # 方式1: 使用映射的主机端口（外部访问）
+                    host_url = "ws://localhost:8080/rpc"
+                    logging.info(f"尝试连接到主机端口URL: {host_url}")
+                    await _db.connect(host_url)
+                    logging.info("连接成功！")
+                except Exception as conn_err:
+                    logging.error(f"连接失败，错误: {conn_err}")
                     
-                # 方式3: 如果前两种方式失败，尝试使用新版本的连接方式
-                if not await is_connection_alive():
-                    logging.info("尝试使用新版本的连接方式")
-                    await _db.connect(SURREAL_URL)
+                    try:
+                        # 方式2: 如果方式1失败，尝试使用HTTP URL
+                        http_url = "http://localhost:8080/sql"
+                        logging.info(f"尝试连接到HTTP URL: {http_url}")
+                        await _db.connect(http_url)
+                        logging.info("连接成功！")
+                    except Exception as http_err:
+                        logging.error(f"HTTP连接失败，错误: {http_err}")
+                        
+                        # 自动切换到模拟模式
+                        USE_MOCK_MODE = True
+                        logging.warning("所有连接尝试失败，自动切换到模拟模式")
+                        return None
                 
                 # 登录和选择数据库
                 await _db.signin({"user": SURREAL_USER, "pass": SURREAL_PASS})
@@ -118,7 +131,6 @@ async def init_db_connection():
                     logging.info("尝试降级surrealdb客户端库或更新URL格式")
                     
                     # 如果连接失败，切换到模拟模式
-                    global USE_MOCK_MODE
                     USE_MOCK_MODE = True
                     logging.warning("由于连接错误，自动切换到模拟模式")
                 else:
@@ -139,7 +151,6 @@ async def init_db_connection():
                 return await init_db_connection()
             
             # 如果所有尝试都失败，切换到模拟模式
-            global USE_MOCK_MODE
             USE_MOCK_MODE = True
             logging.warning("所有连接尝试失败，自动切换到模拟模式")
             return None
@@ -148,6 +159,11 @@ async def init_db_connection():
 async def get_db():
     """获取数据库连接"""
     global _db_pool
+    
+    # 如果数据库被禁用或使用模拟模式，直接返回None
+    if not ENABLE_DB or USE_MOCK_MODE:
+        logging.debug("数据库连接被禁用或使用模拟模式，返回None")
+        return None
     
     # 获取当前任务 ID作为唯一标识符
     task_id = id(asyncio.current_task())
@@ -266,6 +282,7 @@ def create(table, data):
     """在指定表中创建数据"""
     async def _create():
         import logging
+        global _mock_db
         
         # 记录创建前的数据
         logging.info(f"DB Create - Table: {table}")
@@ -278,6 +295,23 @@ def create(table, data):
         db = await get_db()
         if db is None:
             print("Using mock mode for create operation")
+            # 在模拟模式下存储数据
+            if table not in _mock_db:
+                _mock_db[table] = {}
+                
+            # 确保数据有ID
+            if 'id' not in data:
+                data['id'] = str(uuid.uuid4())
+                
+            record_id = data['id']
+            _mock_db[table][record_id] = data.copy()
+            
+            # 如果是用户数据，也以邮箱为键存储一份
+            if table == 'users' and 'email' in data:
+                _mock_db[table][data['email']] = data.copy()
+                logging.info(f"Stored user in mock DB with ID: {record_id} and email: {data['email']}")
+            
+            logging.info(f"Mock DB contents for {table}: {list(_mock_db[table].keys())}")
             return data
         
         try:
@@ -304,11 +338,50 @@ def query(table, condition=None, sort=None, limit=None, offset=None):
     """查询指定表中的数据"""
     async def _query():
         import time
+        import logging
+        global _mock_db
         start_time = time.time()
         db = await get_db()
         if db is None:
             print("Using mock mode for query operation")
-            return []
+            # 在模拟模式下查询数据
+            if table not in _mock_db:
+                logging.info(f"Table {table} not found in mock DB")
+                return []
+                
+            results = []
+            
+            # 如果没有条件，返回所有数据
+            if not condition:
+                logging.info(f"Returning all data for table {table}")
+                return list(_mock_db[table].values())
+                
+            # 处理特定条件查询
+            for key, value in condition.items():
+                # 直接查询用户ID或邮箱
+                if key == 'id' or key == 'email':
+                    if value in _mock_db[table]:
+                        logging.info(f"Found record with {key}={value}")
+                        results.append(_mock_db[table][value])
+                        return results
+                        
+            # 如果没有直接匹配，遍历所有记录进行过滤
+            for record_id, record in _mock_db[table].items():
+                # 跳过邮箱键（因为它们是副本）
+                if '@' in record_id and table == 'users':
+                    continue
+                    
+                match = True
+                for key, value in condition.items():
+                    if key not in record or record[key] != value:
+                        match = False
+                        break
+                        
+                if match:
+                    results.append(record)
+                    
+            logging.info(f"Found {len(results)} records matching condition {condition}")
+            return results
         
         # 根据条件执行查询
         query_str = ""
