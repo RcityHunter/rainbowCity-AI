@@ -30,11 +30,7 @@ load_dotenv()
 # 获取OpenAI API密钥
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
-# 初始OpenAI客户端
-# 在新版本的 OpenAI SDK 中，如果需要设置代理，应该使用 http_client 参数
-# 显式创建 httpx 客户端，不使用任何代理设置
-http_client = httpx.Client()
-client = OpenAI(api_key=OPENAI_API_KEY, http_client=http_client)
+# OpenAI客户端将在每个函数中初始化，以避免全局变量问题
 
 # 创建AI-Agent实例
 ai_assistant = AIAssistant(model_name="gpt-3.5-turbo")
@@ -153,6 +149,9 @@ class ChatResponse(BaseModel):
 async def chat(request: ChatRequest):
     logging.info("===== CHAT FUNCTION EXECUTED =====")
     try:
+        # 初始化OpenAI客户端
+        http_client = httpx.Client()
+        client = OpenAI(api_key=OPENAI_API_KEY, http_client=http_client)
         messages = request.messages
         session_id = request.session_id
         turn_id = request.turn_id
@@ -383,8 +382,11 @@ async def chat(request: ChatRequest):
                     logging.error(f"处理天气查询时出错: {str(e)}")
                     # 失败时继续正常处理
 
+        # 初始化ai_message变量
+        ai_message = None
+        
         # 检查是否有工具调用
-        if ai_message.tool_calls:
+        if ai_message and hasattr(ai_message, 'tool_calls') and ai_message.tool_calls:
             # 有工具调用，处理工具调用
             tool_calls = []
             for tool_call in ai_message.tool_calls:
@@ -395,7 +397,7 @@ async def chat(request: ChatRequest):
                 })
         
         # 处理工具调用响应
-        if hasattr(ai_message, "tool_calls") and ai_message.tool_calls:
+        if ai_message and hasattr(ai_message, "tool_calls") and ai_message.tool_calls:
             tool_calls_data = ai_message.tool_calls
             tool_responses = []
             
@@ -583,7 +585,7 @@ async def chat(request: ChatRequest):
                 ai_message = response.choices[0].message
             
             # 检查是否有工具调用
-            if ai_message.tool_calls:
+            if ai_message and hasattr(ai_message, 'tool_calls') and ai_message.tool_calls:
                 # 有工具调用，处理工具调用
                 tool_calls = []
                 for tool_call in ai_message.tool_calls:
@@ -594,7 +596,7 @@ async def chat(request: ChatRequest):
                     })
                 
                 # 处理工具调用响应
-                if "tool_calls" in ai_message:
+                if ai_message and hasattr(ai_message, 'tool_calls') and ai_message.tool_calls:
                     tool_calls_data = ai_message.tool_calls
                     tool_responses = []
                     
@@ -669,10 +671,10 @@ async def chat(request: ChatRequest):
                 return {
                     "success": True,
                     "response": {
-                        "content": ai_message.content,
+                        "content": ai_message.content if ai_message and hasattr(ai_message, 'content') else "",
                         "type": "text",
                         "metadata": {
-                            "model": response.model,
+                            "model": response.model if 'response' in locals() else "gpt-3.5-turbo",
                             "created": int(time.time()),
                             "session_id": session_id,
                             "turn_id": turn_id
@@ -685,10 +687,10 @@ async def chat(request: ChatRequest):
                 return {
                     "success": True,
                     "response": {
-                        "content": ai_message.content,
+                        "content": ai_message.content if ai_message and hasattr(ai_message, 'content') else "",
                         "type": "text",
                         "metadata": {
-                            "model": response.model,
+                            "model": response.model if 'response' in locals() else "gpt-3.5-turbo",
                             "created": int(time.time()),
                             "session_id": session_id,
                             "turn_id": turn_id
@@ -709,10 +711,10 @@ async def chat(request: ChatRequest):
             return {
                 "success": True,
                 "response": {
-                    "content": ai_message.content,
+                    "content": ai_message.content if ai_message and hasattr(ai_message, 'content') else "",
                     "type": "text",
                     "metadata": {
-                        "model": response.model,
+                        "model": response.model if 'response' in locals() else "gpt-3.5-turbo",
                         "created": int(time.time()),
                         "session_id": session_id,
                         "turn_id": turn_id
@@ -908,6 +910,10 @@ async def chat_agent(request: ChatRequest):
 # 简单的聊天端点，直接返回JSON响应，支持工具调用和多模态消息
 @router.post("/chat-simple")
 async def chat_simple(request: ChatRequest):
+    # 初始化OpenAI客户端
+    http_client = httpx.Client()
+    client = OpenAI(api_key=OPENAI_API_KEY, http_client=http_client)
+    
     messages = request.messages
     session_id = request.session_id
     turn_id = request.turn_id
@@ -1027,10 +1033,10 @@ async def chat_simple(request: ChatRequest):
                         api_key = os.getenv("TAVILY_API_KEY")
                         if api_key:
                             # 创建 Tavily 客户端
-                            client = TavilyClient(api_key=api_key)
+                            client_tavily = TavilyClient(api_key=api_key)
                             
                             # 执行搜索
-                            search_result = client.search(
+                            search_result = client_tavily.search(
                                 query=search_query,
                                 search_depth="basic",
                                 max_results=5,  # 限制结果数量

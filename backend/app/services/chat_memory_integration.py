@@ -3,11 +3,14 @@
 """
 
 import logging
-from typing import Dict, Any, List, Optional, Union
+import asyncio
+from typing import Dict, Any, List, Optional, Tuple
+from datetime import datetime
 
-from app.services.chat_service import ChatService
-from app.services.memory_service import MemoryService
 from app.services.memory_manager import MemoryManager
+from app.services.memory_service import MemoryService
+from app.services.embedding_service import embedding_service
+from app.services.chat_service import ChatService
 
 
 class ChatMemoryIntegration:
@@ -85,6 +88,58 @@ class ChatMemoryIntegration:
             logging.error(f"处理聊天消息失败: {str(e)}")
             return result
     
+    async def save_chat_history(self, session_id: str, user_id: str, messages: List[Dict[str, Any]]) -> bool:
+        """
+        保存聊天历史
+        
+        Args:
+            session_id: 会话ID
+            user_id: 用户ID
+            messages: 消息列表
+            
+        Returns:
+            是否保存成功
+        """
+        try:
+            # 保存聊天历史（自动生成向量嵌入）
+            result = await MemoryService.save_chat_history(
+                session_id=session_id,
+                user_id=user_id,
+                messages=messages,
+                generate_embedding=True
+            )
+            
+            return bool(result)
+        except Exception as e:
+            logging.error(f"保存聊天历史失败: {str(e)}")
+            return False
+    
+    async def get_relevant_memories(self, user_id: str, query: str, limit: int = 5) -> List[Dict[str, Any]]:
+        """
+        获取与查询相关的记忆
+        
+        Args:
+            user_id: 用户ID
+            query: 查询文本
+            limit: 返回结果数量限制
+            
+        Returns:
+            相关记忆列表
+        """
+        try:
+            # 使用记忆管理器获取相关记忆（默认使用向量搜索）
+            memories = await self.memory_manager.get_relevant_memories(
+                query=query,
+                user_id=user_id,
+                limit=limit,
+                use_vector_search=True
+            )
+            
+            return memories
+        except Exception as e:
+            logging.error(f"获取相关记忆失败: {str(e)}")
+            return []
+    
     async def enhance_response_with_memories(
         self,
         user_id: str,
@@ -116,11 +171,7 @@ class ChatMemoryIntegration:
         try:
             # 添加超时处理，最多等待3秒
             relevant_memories = await asyncio.wait_for(
-                self.memory_manager.retrieve_relevant_memories(
-                    user_id=user_id,
-                    query=user_message,
-                    limit=5
-                ),
+                self.get_relevant_memories(user_id, user_message, limit=5),
                 timeout=3.0  # 3秒超时
             )
             result["relevant_memories"] = relevant_memories

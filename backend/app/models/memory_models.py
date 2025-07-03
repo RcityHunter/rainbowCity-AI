@@ -3,9 +3,10 @@
 """
 
 from datetime import datetime
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List, Optional, Union
 from enum import Enum
 from pydantic import BaseModel, Field
+import numpy as np
 
 
 class MemoryType(str, Enum):
@@ -31,6 +32,7 @@ class ChatHistoryMemory(BaseModel):
     messages: List[Dict[str, Any]]  # 消息列表
     created_at: str  # 创建时间
     updated_at: str  # 更新时间
+    embedding: Optional[List[float]] = None  # 向量嵌入
     metadata: Optional[Dict[str, Any]] = Field(default_factory=dict)  # 元数据
 
 
@@ -46,6 +48,7 @@ class UserMemory(BaseModel):
     updated_at: str  # 更新时间
     last_accessed: Optional[str] = None  # 最后访问时间
     access_count: int = 0  # 访问次数
+    embedding: Optional[List[float]] = None  # 向量嵌入
     metadata: Optional[Dict[str, Any]] = Field(default_factory=dict)  # 元数据
 
 
@@ -60,6 +63,7 @@ class SessionSummary(BaseModel):
     topics: List[str] = Field(default_factory=list)  # 讨论的主题
     key_points: List[str] = Field(default_factory=list)  # 关键点
     created_at: str  # 创建时间
+    embedding: Optional[List[float]] = None  # 向量嵌入
     metadata: Optional[Dict[str, Any]] = Field(default_factory=dict)  # 元数据
 
 
@@ -70,5 +74,7 @@ class MemoryQuery(BaseModel):
     memory_type: Optional[MemoryType] = None  # 记忆类型
     limit: int = 10  # 限制返回的记忆数量
     offset: int = 0  # 记忆偏移量
-    sort_by: str = "relevance"  # 排序方式：relevance（相关性）, recency（最近）, importance（重要性）
+    sort_by: str = "relevance"  # 排序方式：relevance（相关性）, recency（最近）, importance（重要性）, vector（向量相似度）
+    use_vector_search: bool = True  # 是否使用向量搜索
     metadata_filter: Optional[Dict[str, Any]] = None  # 元数据过滤条件
+    embedding: Optional[List[float]] = None  # 查询的向量嵌入（如果已经生成）

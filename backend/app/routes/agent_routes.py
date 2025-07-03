@@ -19,7 +19,7 @@ from fastapi import APIRouter, HTTPException, Depends, Request, Response
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
-from app.agent.ai_assistant import AIAssistant
+from app.agent.agent_factory import agent_factory
 from app.agent.image_processor import ImageData
 from app.agent.file_processor import handle_file_upload
 from app.routes.auth_routes import get_current_user
@@ -48,6 +48,7 @@ class ChatRequest(BaseModel):
     user_id: Optional[str] = "anonymous"
     ai_id: Optional[str] = "ai_rainbow_city"
     image_data: Optional[str] = None
+    agent_type: Optional[str] = None  # 新增agent_type参数，可选值: "classic"或"graph"
 
 class ChatResponse(BaseModel):
     success: bool
@@ -102,21 +103,22 @@ async def chat_agent(chat_data: ChatRequest):
             if user_messages:
                 user_message = user_messages[-1].content
         
-        # 创建AI助手实例并使用异步上下文管理器确保资源正确关闭
-        logging.info(f"[调试-{request_id}] 准备创建AI助手实例: {datetime.now().isoformat()}")
-        async with AIAssistant() as ai_assistant:
+        # 使用代理工厂创建AI助手实例
+        logging.info(f"[调试-{request_id}] 准备创建AI助手实例，类型: {chat_data.agent_type or '默认'}, 时间: {datetime.now().isoformat()}")
+        ai_assistant = await agent_factory.get_agent(agent_type=chat_data.agent_type)
+        try:
             logging.info(f"[调试-{request_id}] AI助手实例创建成功: {datetime.now().isoformat()}")
+            # 处理用户查询 - 使用异步方式调用，需要await
+            # 添加超时处理，设置为28秒（低于前端的30秒超时）
+            logging.info(f"[调试-{request_id}] 开始调用AI助手处理查询: session_id={session_id}, user_message='{user_message[:50]}...'")
+            logging.info(f"[调试-{request_id}] 调用process_query时间: {datetime.now().isoformat()}")
+            import sys
+            logging.info(f"[调试-{request_id}] 当前内存使用: {sys.getsizeof(ai_assistant)/1024/1024:.2f} MB")
+            logging.info(f"[调试-{request_id}] 当前对象引用计数: {sys.getrefcount(ai_assistant)}")
+            import tracemalloc
+            tracemalloc.start()
+            snapshot1 = tracemalloc.take_snapshot()
             try:
-                # 处理用户查询 - 使用异步方式调用，需要await
-                # 添加超时处理，设置为28秒（低于前端的30秒超时）
-                logging.info(f"[调试-{request_id}] 开始调用AI助手处理查询: session_id={session_id}, user_message='{user_message[:50]}...'")
-                logging.info(f"[调试-{request_id}] 调用process_query时间: {datetime.now().isoformat()}")
-                import sys
-                logging.info(f"[调试-{request_id}] 当前内存使用: {sys.getsizeof(ai_assistant)/1024/1024:.2f} MB")
-                logging.info(f"[调试-{request_id}] 当前对象引用计数: {sys.getrefcount(ai_assistant)}")
-                import tracemalloc
-                tracemalloc.start()
-                snapshot1 = tracemalloc.take_snapshot()
                 result = await asyncio.wait_for(
                     ai_assistant.process_query(
                         user_input=user_message,
@@ -147,30 +149,33 @@ async def chat_agent(chat_data: ChatRequest):
                     "tool_results": [],
                     "error": "处理超时"
                 }
+            
+            # 添加会话ID和轮次ID到响应
+            if isinstance(result, dict):
+                # 添加 success 字段
+                result["success"] = True
+                result["session_id"] = session_id
+                if "response" in result and isinstance(result["response"], dict):
+                    if "metadata" not in result["response"]:
+                        result["response"]["metadata"] = {}
+                    result["response"]["metadata"]["session_id"] = session_id
+                    result["response"]["metadata"]["turn_id"] = turn_id
         
-        # 添加会话ID和轮次ID到响应
-        if isinstance(result, dict):
-            # 添加 success 字段
-            result["success"] = True
-            result["session_id"] = session_id
-            if "response" in result and isinstance(result["response"], dict):
-                if "metadata" not in result["response"]:
-                    result["response"]["metadata"] = {}
-                result["response"]["metadata"]["session_id"] = session_id
-                result["response"]["metadata"]["turn_id"] = turn_id
-        
-        # 在异步上下文管理器结束后记录日志
-        logging.info(f"[调试-{request_id}] 异步上下文管理器结束: {datetime.now().isoformat()}")
-        logging.info(f"[调试-{request_id}] 资源应该已被释放")
-        
-        # 再次强制进行垃圾回收
-        gc.collect()
-        logging.info(f"[调试-{request_id}] 强制垃圾回收完成")
-        
-        # 使用JSONResponse直接返回结果，避免FastAPI尝试将其视为协程
-        response_dict = dict(result)
-        logging.info(f"[调试-{request_id}] 返回响应成功: session_id={session_id}, 时间: {datetime.now().isoformat()}")
-        return JSONResponse(content=response_dict)
+            # 在异步上下文管理器结束后记录日志
+            logging.info(f"[调试-{request_id}] 异步上下文管理器结束: {datetime.now().isoformat()}")
+            logging.info(f"[调试-{request_id}] 资源应该已被释放")
+            
+            # 再次强制进行垃圾回收
+            gc.collect()
+            logging.info(f"[调试-{request_id}] 强制垃圾回收完成")
+            
+            # 使用JSONResponse直接返回结果，避免FastAPI尝试将其视为协程
+            response_dict = dict(result)
+            logging.info(f"[调试-{request_id}] 返回响应成功: session_id={session_id}, 时间: {datetime.now().isoformat()}")
+            return JSONResponse(content=response_dict)
+        finally:
+            # 这里不关闭AI助手实例，由代理工厂管理
+            pass
     except Exception as e:
         logging.error(f"[调试-{request_id}] AI-Agent聊天接口错误: {str(e)}")
         import traceback
@@ -352,29 +357,34 @@ async def chat_with_image(
 async def get_history(session_id: str):
     """获取会话历史"""
     try:
-        # 创建新的AI助手实例并使用异步上下文管理器确保资源正确关闭
-        async with AIAssistant() as ai_assistant:
+        # 使用代理工厂创建AI助手实例（默认类型）
+        ai_assistant = await agent_factory.get_agent()
+        try:
             history = ai_assistant.get_conversation_history(session_id)
             return {
                 "success": True,
                 "session_id": session_id,
                 "history": history
             }
-    except Exception as e:
-        logging.error(f"获取会话历史错误: {str(e)}")
-        return {
-            "success": False,
-            "session_id": session_id,
-            "history": [],
-            "error": str(e)
-        }
+        except Exception as e:
+            logging.error(f"获取会话历史错误: {str(e)}")
+            return {
+                "success": False,
+                "session_id": session_id,
+                "history": [],
+                "error": str(e)
+            }
+    finally:
+        # 这里不关闭AI助手实例，由代理工厂管理
+        pass
 
 @router.get("/logs/{session_id}", response_model=LogsResponse)
 async def get_logs(session_id: str):
     """获取会话日志"""
     try:
-        # 创建新的AI助手实例并使用异步上下文管理器确保资源正确关闭
-        async with AIAssistant() as ai_assistant:
+        # 使用代理工厂创建AI助手实例（默认类型）
+        ai_assistant = await agent_factory.get_agent()
+        try:
             logs = ai_assistant.get_session_logs(session_id)
             
             return {
@@ -382,30 +392,39 @@ async def get_logs(session_id: str):
                 "session_id": session_id,
                 "logs": logs
             }
-        
-    except Exception as e:
-        logging.error(f"获取会话日志时出错: {str(e)}")
-        return {
-            "success": False,
-            "session_id": session_id,
-            "logs": [],
-            "error": str(e)
-        }
+        except Exception as e:
+            logging.error(f"获取会话日志时出错: {str(e)}")
+            return {
+                "success": False,
+                "session_id": session_id,
+                "logs": [],
+                "error": str(e)
+            }
+    finally:
+        # 这里不关闭AI助手实例，由代理工厂管理
+        pass
 
 @router.post("/clear/{session_id}", response_model=ClearSessionResponse)
 async def clear_session(session_id: str):
     """清除会话数据"""
     try:
-        # 创建新的AI助手实例并使用异步上下文管理器确保资源正确关闭
-        async with AIAssistant() as ai_assistant:
+        # 使用代理工厂创建AI助手实例（默认类型）
+        ai_assistant = await agent_factory.get_agent()
+        try:
             success = ai_assistant.clear_session(session_id)
-        
-        return {
-            "success": success,
-            "session_id": session_id,
-            "message": "会话数据已清除" if success else "未找到指定会话"
-        }
-        
+            
+            return {
+                "success": success,
+                "session_id": session_id,
+                "message": "会话数据已清除" if success else "未找到指定会话"
+            }
+        except Exception as e:
+            logging.error(f"清除会话数据时出错: {str(e)}")
+            return {
+                "success": False,
+                "session_id": session_id,
+                "error": str(e)
+            }
     except Exception as e:
         logging.error(f"清除会话数据时出错: {str(e)}")
         return {

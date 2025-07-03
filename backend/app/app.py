@@ -11,6 +11,10 @@ import gc
 from dotenv import load_dotenv
 from .db import init_db_connection, close_db
 
+# 设置向量嵌入模型环境变量（如果未设置）
+if not os.getenv('EMBEDDING_MODEL'):
+    os.environ['EMBEDDING_MODEL'] = 'all-MiniLM-L6-v2'  # 默认使用轻量级模型
+
 # 设置日志级别
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -47,6 +51,16 @@ async def validation_exception_handler(request, exc):
 async def startup_db_client():
     await init_db_connection()
     print("Database connection initialized on startup")
+    
+    # 初始化向量存储
+    from .services.initialize_vector_storage import initialize_vector_storage
+    try:
+        print("开始初始化向量存储...")
+        await initialize_vector_storage()
+        print("向量存储初始化完成")
+    except Exception as e:
+        print(f"向量存储初始化失败: {str(e)}")
+        logging.error(f"向量存储初始化失败: {str(e)}")
 
 @app.on_event("shutdown")
 async def shutdown_db_client():
@@ -122,6 +136,7 @@ from .routes.conversation_routes import router as conversation_router
 from .routes.chat_history_routes import router as chat_history_router
 from .routes.chat_sessions_routes import router as chat_sessions_router
 from .routes.oauth_routes import router as oauth_router
+from .routes.oauth_callback import router as oauth_callback_router
 from .routes.search_routes import router as search_router
 
 # 所有路由模块已经迁移到 FastAPI
@@ -143,6 +158,7 @@ api_router.include_router(conversation_router)
 api_router.include_router(chat_history_router)
 api_router.include_router(chat_sessions_router)
 api_router.include_router(oauth_router)
+api_router.include_router(oauth_callback_router)  # Add our new simplified OAuth callback handler
 api_router.include_router(search_router)
 
 # 将主路由器注册到应用
