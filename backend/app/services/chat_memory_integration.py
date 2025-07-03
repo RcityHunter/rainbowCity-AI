@@ -10,7 +10,7 @@ from datetime import datetime
 from app.services.memory_manager import MemoryManager
 from app.services.memory_service import MemoryService
 from app.services.embedding_service import embedding_service
-from app.services.memory_manager import MemoryManager
+from app.services.chat_service import ChatService
 
 
 class ChatMemoryIntegration:
