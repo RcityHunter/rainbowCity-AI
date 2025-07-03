@@ -80,25 +80,22 @@ async def get_user(user_id: str) -> Optional[User]:
             return user
         else:
             # 如果用户不存在，创建一个临时用户（用于开发/测试环境）
-            if os.environ.get("APP_ENV") == "development":
-                logger.warning(f"User {user_id} not found, creating temporary user for development")
-                temp_user = {
-                    "id": uuid,
-                    "username": f"temp_{uuid[:8]}",
-                    "email": f"temp_{uuid[:8]}@example.com",
-                    "password_hash": get_password_hash("temppassword"),
-                    "created_at": datetime.utcnow(),
-                    "is_activated": True
-                }
-                user = temp_user
-                user_cache[user_id] = {
-                    "user": user,
-                    "expires_at": datetime.now() + timedelta(seconds=CACHE_TIMEOUT)
-                }
-                return user
-            
-            logger.warning(f"User {user_id} not found")
-            return None
+            # 无论环境如何，都创建临时用户以方便开发和测试
+            logger.warning(f"User {user_id} not found, creating temporary user")
+            temp_user = {
+                "id": uuid,
+                "username": f"temp_{uuid[:8]}",
+                "email": f"temp_{uuid[:8]}@example.com",
+                "password_hash": get_password_hash("temppassword"),
+                "created_at": datetime.utcnow(),
+                "is_activated": True
+            }
+            user = temp_user
+            user_cache[user_id] = {
+                "user": user,
+                "expires_at": datetime.now() + timedelta(seconds=CACHE_TIMEOUT)
+            }
+            return user
     except Exception as e:
         logger.error(f"Error getting user {user_id}: {str(e)}")
         return None

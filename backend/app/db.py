@@ -1,25 +1,35 @@
-import asyncio
 import os
+import logging
+import asyncio
 import time
 import surrealdb
+from typing import Optional, Dict, Any, List, Union
+from asyncio import Lock
 from dotenv import load_dotenv
-import logging
 
 # 加载环境变量
 load_dotenv()
 
-# 是否启用数据库 - 由于连接问题，暂时完全禁用数据库连接
-ENABLE_DB = False  # 禁用数据库连接
+# 是否启用数据库
+ENABLE_DB = True  # 启用数据库连接
 
-# 是否使用模拟模式 - 从环境变量获取，默认为False
-USE_MOCK_MODE = os.getenv('USE_MOCK_MODE', 'False').lower() == 'true'
+# 是否使用模拟模式 - 尝试禁用模拟模式，使用真实数据库
+USE_MOCK_MODE = False  # 禁用模拟模式，尝试连接真实数据库
 
 # SurrealDB配置
-SURREAL_URL = os.getenv('SURREAL_URL', 'ws://localhost:8080')
-SURREAL_USER = os.getenv('SURREAL_USER', 'root')
-SURREAL_PASS = os.getenv('SURREAL_PASS', '123')
-SURREAL_NS = os.getenv('SURREAL_NS', 'rainbow')
-SURREAL_DB = os.getenv('SURREAL_DB', 'test')
+# 确保使用正确的协议格式，尝试使用 WebSocket
+# Docker 容器将 8000 端口映射到主机的 8080 端口
+SURREAL_URL = os.environ.get('SURREAL_URL', 'ws://localhost:8080')
+SURREAL_USER = os.environ.get('SURREAL_USER', 'root')
+SURREAL_PASS = os.environ.get('SURREAL_PASS', '123')
+SURREAL_NS = os.environ.get('SURREAL_NS', 'rainbow')
+SURREAL_DB = os.environ.get('SURREAL_DB', 'test')
+
+# 输出调试信息
+logging.info(f"SURREAL_URL: {SURREAL_URL}")
+logging.info(f"SURREAL_USER: {SURREAL_USER}")
+logging.info(f"SURREAL_NS: {SURREAL_NS}")
+logging.info(f"SURREAL_DB: {SURREAL_DB}")
 
 # 如果数据库被禁用或使用模拟模式，记录日志
 if not ENABLE_DB or USE_MOCK_MODE:
@@ -58,26 +68,36 @@ async def init_db_connection():
     """初始化数据库连接"""
     global _db, _connection_attempts, USE_MOCK_MODE
     
-    # 如果数据库被禁用或使用模拟模式，直接返回None
-    if not ENABLE_DB or USE_MOCK_MODE:
-        logging.info("数据库连接已被禁用或使用模拟模式，返回None")
-        return None
-    
-    # 使用异步锁确保只有一个协程在初始化连接
-    async with _db_lock:
-        # 如果连接已存在且正常，直接返回
-        if _db is not None and await is_connection_alive():
-            logging.info("DB连接已存在且正常，直接返回")
-            return _db
+    try:
+        # 输出调试信息
+        logging.info(f"ENABLE_DB: {ENABLE_DB}, USE_MOCK_MODE: {USE_MOCK_MODE}")
         
-        # 检查连接尝试次数
-        if _connection_attempts >= _max_connection_attempts:
-            logging.error(f"Maximum connection attempts ({_max_connection_attempts}) reached. Using mock mode.")
+        # 如果数据库被禁用或使用模拟模式，直接返回None
+        if not ENABLE_DB or USE_MOCK_MODE:
+            logging.info("数据库连接已被禁用或使用模拟模式，返回None")
             return None
         
-        # 尝试连接
-        _connection_attempts += 1
-        try:
+        # 使用异步锁确保只有一个协程在初始化连接
+        async with _db_lock:
+            # 如果连接已存在且正常，直接返回
+            if _db is not None:
+                try:
+                    if await is_connection_alive():
+                        logging.info("DB连接已存在且正常，直接返回")
+                        return _db
+                except Exception as e:
+                    logging.error(f"DB连接检查失败: {e}")
+            
+            # 检查连接尝试次数
+            if _connection_attempts >= _max_connection_attempts:
+                logging.error(f"Maximum connection attempts ({_max_connection_attempts}) reached. Using mock mode.")
+                USE_MOCK_MODE = True
+                return None
+            
+            # 尝试连接
+            _connection_attempts += 1
+            logging.info(f"SurrealDB 连接尝试 #{_connection_attempts}")
+            
             # 如果已有连接，先关闭
             if _db is not None:
                 try:
@@ -86,74 +106,60 @@ async def init_db_connection():
                 except Exception as e:
                     logging.error(f"关闭旧连接出错: {str(e)}")
             
-            # 创建新连接
-            logging.info(f"尝试创建新的数据库连接: {SURREAL_URL}")
-            _db = surrealdb.Surreal()
-            
-            # 防止None值被传递给replace方法
-            if SURREAL_URL is None:
-                logging.error("SURREAL_URL is None, cannot connect to database")
-                return None
-                
             try:
-                # 尝试不同的连接方式，考虑到Docker容器内部使用8000端口而映射到8080
+                # 尝试连接 SurrealDB
+                logging.info("尝试连接 SurrealDB")
                 
-                # 直接使用硬编码的URL而不是变量，避免NoneType错误
+                                # 使用最新版本的 SurrealDB Python SDK 创建客户端并连接
+                logging.info(f"使用 URL: {SURREAL_URL}")
+                
                 try:
-                    # 方式1: 使用映射的主机端口（外部访问）
-                    host_url = "ws://localhost:8080/rpc"
-                    logging.info(f"尝试连接到主机端口URL: {host_url}")
-                    await _db.connect(host_url)
-                    logging.info("连接成功！")
-                except Exception as conn_err:
-                    logging.error(f"连接失败，错误: {conn_err}")
+                    # 创建客户端对象
+                    _db = surrealdb.Surreal(SURREAL_URL)
+                    logging.info(f"已创建 SurrealDB 客户端，类型: {type(_db)}")
                     
-                    try:
-                        # 方式2: 如果方式1失败，尝试使用HTTP URL
-                        http_url = "http://localhost:8080/sql"
-                        logging.info(f"尝试连接到HTTP URL: {http_url}")
-                        await _db.connect(http_url)
-                        logging.info("连接成功！")
-                    except Exception as http_err:
-                        logging.error(f"HTTP连接失败，错误: {http_err}")
-                        
-                        # 自动切换到模拟模式
-                        USE_MOCK_MODE = True
-                        logging.warning("所有连接尝试失败，自动切换到模拟模式")
-                        return None
+                    # 等待连接建立
+                    logging.info("等待连接建立...")
+                    # 注意：在异步上下文中使用 asyncio.sleep
+                    await asyncio.sleep(1)  # 给连接一些时间建立
+                    
+                    # 使用正确的凭据格式登录
+                    # 注意：surrealdb 客户端的方法不是异步的，不需要 await
+                    logging.info(f"尝试使用凭据登录: {SURREAL_USER}")
+                    signin_result = _db.signin({
+                        "username": SURREAL_USER,
+                        "password": SURREAL_PASS
+                    })
+                    logging.info(f"登录成功！结果: {signin_result}")
+                    
+                    # 选择命名空间和数据库
+                    logging.info(f"使用命名空间: {SURREAL_NS}, 数据库: {SURREAL_DB}")
+                    _db.use(SURREAL_NS, SURREAL_DB)
+                    logging.info("SurrealDB 连接完全成功")
+                    
+                except Exception as e:
+                    logging.error(f"连接或登录失败: {e}")
+                    raise e
                 
-                # 登录和选择数据库
-                await _db.signin({"user": SURREAL_USER, "pass": SURREAL_PASS})
-                await _db.use(SURREAL_NS, SURREAL_DB)
-            except AttributeError as e:
-                if "'NoneType' object has no attribute 'replace'" in str(e):
-                    logging.error(f"SurrealDB连接错误: URL格式或客户端库版本问题 - {e}")
-                    logging.info("尝试降级surrealdb客户端库或更新URL格式")
-                    
-                    # 如果连接失败，切换到模拟模式
-                    USE_MOCK_MODE = True
-                    logging.warning("由于连接错误，自动切换到模拟模式")
+                # 重置连接尝试计数
+                _connection_attempts = 0
+                return _db
+            except Exception as e:
+                logging.error(f"Error connecting to SurrealDB (attempt {_connection_attempts}): {e}")
+                
+                # 如果还有尝试次数，等待一段时间后重试
+                if _connection_attempts < _max_connection_attempts:
+                    logging.info(f"Retrying in {_connection_retry_delay} seconds...")
+                    await asyncio.sleep(_connection_retry_delay)
+                    return await init_db_connection()
                 else:
-                    logging.error(f"SurrealDB连接错误: {e}")
-                return None
-            logging.info(f"Connected to SurrealDB at {SURREAL_URL} (attempt {_connection_attempts})")
-            
-            # 重置连接尝试计数
-            _connection_attempts = 0
-            return _db
-        except Exception as e:
-            logging.error(f"Error connecting to SurrealDB (attempt {_connection_attempts}): {e}")
-            
-            # 如果还有尝试次数，等待一段时间后重试
-            if _connection_attempts < _max_connection_attempts:
-                logging.info(f"Retrying in {_connection_retry_delay} seconds...")
-                await asyncio.sleep(_connection_retry_delay)  # 使用异步睡眠而不是阻塞睡眠
-                return await init_db_connection()
-            
-            # 如果所有尝试都失败，切换到模拟模式
-            USE_MOCK_MODE = True
-            logging.warning("所有连接尝试失败，自动切换到模拟模式")
-            return None
+                    logging.error("Maximum connection attempts reached. Using mock mode.")
+                    USE_MOCK_MODE = True
+                    return None
+    except Exception as e:
+        logging.error(f"Unexpected error in init_db_connection: {e}")
+        USE_MOCK_MODE = True
+        return None
 
 # 异步获取数据库连接
 async def get_db():

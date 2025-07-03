@@ -6,7 +6,7 @@ import './ChatSidebar.css';
 function ChatSidebar({ conversations, onSelectConversation, onCreateNewChat }) {
   console.log('ChatSidebar received conversations:', conversations);
   const [searchTerm, setSearchTerm] = useState('');
-  const [isExpanded, setIsExpanded] = useState(false);
+  const [isExpanded, setIsExpanded] = useState(true);
   const [isVisible, setIsVisible] = useState(false);
   const [isLoggedIn, setIsLoggedIn] = useState(false);
   
@@ -38,22 +38,15 @@ function ChatSidebar({ conversations, onSelectConversation, onCreateNewChat }) {
   
   console.log('Filtered conversations:', filteredConversations);
   
-  // 处理鼠标进入事件
-  const handleMouseEnter = () => {
+  // 组件挂载时设置为展开状态
+  useEffect(() => {
     setIsExpanded(true);
     setIsVisible(true);
-  };
-  
-  // 处理鼠标离开事件
-  const handleMouseLeave = () => {
-    setIsExpanded(false);
-  };
+  }, []);
   
   return (
     <div 
       className={`chat-sidebar ${isExpanded ? 'expanded' : ''}`}
-      onMouseEnter={handleMouseEnter}
-      onMouseLeave={handleMouseLeave}
     >
       <div className="sidebar-trigger">
         {/* 触发区域，用于鼠标悬停展开侧边栏 */}

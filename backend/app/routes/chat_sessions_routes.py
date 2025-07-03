@@ -6,6 +6,7 @@
 from fastapi import APIRouter, HTTPException, Depends, Path, Query, Body
 from typing import Dict, Any, List, Optional
 import logging
+import uuid
 from datetime import datetime
 
 from app.models.chat_models import ChatHistoryResponse, ChatSessionsResponse
@@ -71,6 +72,11 @@ async def create_chat_session(
         
         # 提取必要的字段
         session_id = chat_data.get('id')
+        # 如果没有提供session_id，则生成一个新的UUID
+        if not session_id:
+            session_id = str(uuid.uuid4())
+            logging.info(f"生成新的session_id: {session_id}")
+        
         title = chat_data.get('title', '新对话')
         preview = chat_data.get('preview', '')
         last_updated = chat_data.get('lastUpdated', datetime.now().isoformat())

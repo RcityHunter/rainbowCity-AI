@@ -16,8 +16,8 @@ GOOGLE_REDIRECT_URI = os.environ.get("GOOGLE_REDIRECT_URI", "http://localhost:30
 
 GITHUB_CLIENT_ID = os.environ.get("GITHUB_CLIENT_ID", "")
 GITHUB_CLIENT_SECRET = os.environ.get("GITHUB_CLIENT_SECRET", "")
-# 修改为支持后端的回调地址
-GITHUB_REDIRECT_URI = os.environ.get("GITHUB_REDIRECT_URI", "http://localhost:5001/api/oauth/github/callback")
+# 修改为支持前端的回调地址
+GITHUB_REDIRECT_URI = os.environ.get("GITHUB_REDIRECT_URI", "http://localhost:3000/oauth/github/callback")
 
 # Google OAuth2 配置
 GOOGLE_AUTH_URL = "https://accounts.google.com/o/oauth2/auth"
@@ -53,16 +53,27 @@ async def get_github_auth_url(state: str = None) -> str:
     """
     获取GitHub OAuth授权URL
     """
+    # 记录环境变量配置情况
+    logger.info(f"GitHub OAuth config - Client ID: {GITHUB_CLIENT_ID[:5]}...{GITHUB_CLIENT_ID[-5:] if GITHUB_CLIENT_ID else ''}")
+    logger.info(f"GitHub OAuth config - Redirect URI: {GITHUB_REDIRECT_URI}")
+    
+    # 生成随机状态码，如果没有提供
+    if not state:
+        import uuid
+        state = str(uuid.uuid4())
+        logger.info(f"Generated random state: {state[:5]}...")
+    
     params = {
         "client_id": GITHUB_CLIENT_ID,
         "redirect_uri": GITHUB_REDIRECT_URI,
-        "scope": "user:email"
+        "scope": "user:email",
+        "state": state
     }
     
-    if state:
-        params["state"] = state
-        
+    # 构建授权URL
     auth_url = f"{GITHUB_AUTH_URL}?{'&'.join([f'{k}={v}' for k, v in params.items()])}"
+    logger.info(f"Generated GitHub auth URL (partial): {auth_url[:60]}...")
+    
     return auth_url
 
 async def get_google_token(code: str) -> Optional[Dict[str, Any]]:
@@ -74,6 +85,13 @@ async def get_google_token(code: str) -> Optional[Dict[str, Any]]:
         logger.info(f"Google OAuth config - Client ID: {GOOGLE_CLIENT_ID[:5]}...{GOOGLE_CLIENT_ID[-5:] if GOOGLE_CLIENT_ID else ''}")
         logger.info(f"Google OAuth config - Redirect URI: {GOOGLE_REDIRECT_URI}")
         logger.info(f"Processing authorization code: {code[:5]}...")
+        logger.info(f"Full code length: {len(code)}")
+        
+        # 记录环境变量配置情况
+        logger.info(f"Environment variables check:")
+        logger.info(f"GOOGLE_CLIENT_ID set: {'Yes' if os.environ.get('GOOGLE_CLIENT_ID') else 'No'}")
+        logger.info(f"GOOGLE_CLIENT_SECRET set: {'Yes' if os.environ.get('GOOGLE_CLIENT_SECRET') else 'No'}")
+        logger.info(f"GOOGLE_REDIRECT_URI set: {'Yes' if os.environ.get('GOOGLE_REDIRECT_URI') else 'No'}")
         
         # 检查必要的配置
         if not GOOGLE_CLIENT_ID or not GOOGLE_CLIENT_SECRET:
@@ -147,7 +165,7 @@ async def get_google_token(code: str) -> Optional[Dict[str, Any]]:
         logger.error(f"Traceback: {traceback.format_exc()}")
         return None
 
-async def get_github_token(code: str) -> Optional[Dict[str, Any]]:
+async def get_github_token(code: str, state: str = None) -> Optional[Dict[str, Any]]:
     """
     使用授权码获取GitHub访问令牌
     """
@@ -156,7 +174,20 @@ async def get_github_token(code: str) -> Optional[Dict[str, Any]]:
         logger.info(f"GitHub OAuth config - Client ID: {GITHUB_CLIENT_ID[:5]}...{GITHUB_CLIENT_ID[-5:] if GITHUB_CLIENT_ID else ''}")
         logger.info(f"GitHub OAuth config - Redirect URI: {GITHUB_REDIRECT_URI}")
         logger.info(f"Processing authorization code: {code[:5]}...")
+        logger.info(f"Full code length: {len(code)}")
         
+        # 记录环境变量配置情况
+        logger.info(f"Environment variables check:")
+        logger.info(f"GITHUB_CLIENT_ID set: {'Yes' if os.environ.get('GITHUB_CLIENT_ID') else 'No'}")
+        logger.info(f"GITHUB_CLIENT_SECRET set: {'Yes' if os.environ.get('GITHUB_CLIENT_SECRET') else 'No'}")
+        logger.info(f"GITHUB_REDIRECT_URI set: {'Yes' if os.environ.get('GITHUB_REDIRECT_URI') else 'No'}")
+        
+        # 检查必要的配置
+        if not GITHUB_CLIENT_ID or not GITHUB_CLIENT_SECRET:
+            logger.error("Missing GitHub OAuth credentials (client ID or client secret)")
+            return None
+        
+        # 准备令牌请求数据
         token_data = {
             "code": code,
             "client_id": GITHUB_CLIENT_ID,
@@ -164,31 +195,77 @@ async def get_github_token(code: str) -> Optional[Dict[str, Any]]:
             "redirect_uri": GITHUB_REDIRECT_URI
         }
         
+        # 如果提供了state，添加到请求中
+        if state:
+            token_data["state"] = state
+        
+        # 记录完整的请求数据（除了client_secret）
+        log_data = token_data.copy()
+        if "client_secret" in log_data:
+            log_data["client_secret"] = "*****"
+        logger.info(f"Token request data: {log_data}")
+        
         headers = {
-            "Accept": "application/json"
+            "Accept": "application/json",
+            "User-Agent": "RainbowCity-AI-App" # GitHub API 要求提供 User-Agent
         }
         
         logger.info(f"Sending token request to: {GITHUB_TOKEN_URL}")
-        response = requests.post(GITHUB_TOKEN_URL, data=token_data, headers=headers)
         
-        # 记录响应状态和内容（不包含敏感信息）
-        logger.info(f"Token response status: {response.status_code}")
-        
-        if response.status_code != 200:
-            logger.error(f"Token request failed with status {response.status_code}")
-            logger.error(f"Response content: {response.text}")
+        # 使用httpx库发送请求，支持更好的调试
+        import httpx
+        try:
+            with httpx.Client(timeout=30.0) as client:
+                # 尝试使用 JSON 格式发送请求
+                json_headers = headers.copy()
+                json_headers["Content-Type"] = "application/json"
+                
+                logger.info("Trying JSON format request first")
+                response = client.post(GITHUB_TOKEN_URL, json=token_data, headers=json_headers)
+                
+                # 如果 JSON 格式失败，尝试表单格式
+                if response.status_code != 200:
+                    logger.info("JSON format failed, trying form data format")
+                    response = client.post(GITHUB_TOKEN_URL, data=token_data, headers=headers)
+                
+                # 记录响应状态和内容（不包含敏感信息）
+                logger.info(f"Token response status: {response.status_code}")
+                logger.info(f"Response headers: {dict(response.headers)}")
+                
+                if response.status_code != 200:
+                    logger.error(f"Token request failed with status {response.status_code}")
+                    logger.error(f"Response content: {response.text}")
+                    try:
+                        error_data = response.json()
+                        logger.error(f"Error details: {error_data}")
+                        # 返回错误数据，而不是 None，以便调用者可以获取错误详情
+                        return error_data
+                    except:
+                        logger.error("Could not parse error response as JSON")
+                    return None
+                
+                try:
+                    token_response = response.json()
+                except Exception as json_err:
+                    logger.error(f"Failed to parse response as JSON: {str(json_err)}")
+                    logger.error(f"Raw response: {response.text}")
+                    return None
+                
+                # 记录成功获取令牌（不记录实际令牌）
+                if "access_token" in token_response:
+                    logger.info("Successfully obtained GitHub access token")
+                else:
+                    logger.warning(f"No access_token in response. Response keys: {token_response.keys()}")
+                    logger.warning(f"Response content (sanitized): {token_response}")
+                
+                return token_response
+        except httpx.RequestError as req_err:
+            logger.error(f"Request error during GitHub token exchange: {str(req_err)}")
             return None
-            
-        response.raise_for_status()
-        token_response = response.json()
-        
-        # 记录成功获取令牌（不记录实际令牌）
-        if "access_token" in token_response:
-            logger.info("Successfully obtained GitHub access token")
-        
-        return token_response
     except Exception as e:
+        import traceback
         logger.error(f"Error getting GitHub token: {str(e)}")
+        logger.error(f"Traceback: {traceback.format_exc()}")
         return None
 
 async def get_google_user_info(access_token: str) -> Optional[Dict[str, Any]]:

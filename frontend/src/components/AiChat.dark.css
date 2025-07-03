@@ -52,19 +52,19 @@ html, body {
   bottom: 0;
 }
 
-/* 主容器样式 */
+/* 主容器样式 - 调整以适应始终可见的侧边栏 */
 .ai-chat-container {
-  width: 100%;
+  width: calc(100% - 260px);
   height: 100vh;
   display: flex;
   flex-direction: column;
   padding: 0;
   margin: 0;
+  margin-left: 260px; /* 为始终可见的侧边栏留出空间 */
   background-color: var(--bg-dark);
   color: var(--text-primary);
   position: fixed;
   top: 0;
-  left: 0;
   right: 0;
   bottom: 0;
   overflow: hidden;
@@ -409,7 +409,7 @@ html, body {
 .input-form {
   position: fixed;
   bottom: 0;
-  left: 0;
+  left: 260px; /* 与侧边栏宽度相同 */
   right: 0;
   display: flex;
   align-items: center;
@@ -420,7 +420,7 @@ html, body {
   z-index: 10;
   box-sizing: border-box;
   height: 70px;
-  width: 100%;
+  width: calc(100% - 260px); /* 减去侧边栏宽度 */
   flex-shrink: 0;
   margin: 0;
   /* 添加一个强大的上方阴影，确保与聊天背景无缝连接 */
@@ -917,11 +917,36 @@ html, body {
 }
 
 @media (max-width: 768px) {
+  .ai-chat-container {
+    width: 100%;
+    margin-left: 260px; /* 与新的侧边栏宽度保持一致 */
+  }
+  
+  .input-form {
+    left: 260px; /* 与新的侧边栏宽度保持一致 */
+    width: calc(100% - 260px); /* 减去侧边栏宽度 */
+  }
+  
   .message {
     max-width: 90%;
   }
   
   .messages-container {
     height: 350px;
+  }
+}
+
+/* 小屏幕设备适配 */
+@media (max-width: 576px) {
+  .ai-chat-container {
+    width: 100%;
+    margin-left: 0; /* 在小屏幕上不保留侧边栏空间 */
+    padding-left: 260px; /* 使用内边距代替外边距，与新的侧边栏宽度保持一致 */
+  }
+  
+  .input-form {
+    left: 0;
+    width: 100%;
+    padding-left: 270px; /* 为新的侧边栏宽度留出空间加上一点内边距 */
   }
 }

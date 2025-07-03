@@ -1,34 +1,32 @@
-/* 聊天侧边栏样式 */
+/* 聊天侧边栏样式 - 修改为始终可见，宽度调整为260px */
 .chat-sidebar {
   position: fixed;
-  left: -10px;
+  left: 0;
   top: 0;
   height: 100vh;
-  width: 15px;
+  width: 260px;
   z-index: 1000;
   display: flex;
   transition: all 0.25s ease-in-out;
   overflow: hidden;
-}
-
-/* 展开状态 */
-.chat-sidebar.expanded {
-  left: 0;
-  width: 320px;
   box-shadow: 0 0 20px rgba(0, 0, 0, 0.3);
 }
 
-/* 触发区域 */
+/* 展开状态 - 已默认展开，保留类名兼容性 */
+.chat-sidebar.expanded {
+  left: 0;
+  width: 260px;
+  box-shadow: 0 0 20px rgba(0, 0, 0, 0.3);
+}
+
+/* 触发区域 - 不再需要，但保留元素以避免布局问题 */
 .sidebar-trigger {
-  width: 15px;
+  width: 0px;
   height: 100%;
-  background-color: rgba(26, 26, 46, 0.3);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  cursor: pointer;
-  border-right: 1px solid rgba(42, 42, 61, 0.2);
-  opacity: 0.5;
+  background-color: transparent;
+  display: none;
+  border-right: none;
+  opacity: 0;
   transition: all 0.25s ease;
 }
 
@@ -297,15 +295,12 @@
 
 /* 移动端适配 */
 @media (max-width: 768px) {
+  .chat-sidebar,
   .chat-sidebar.expanded {
     width: 280px;
   }
   
   .sidebar-trigger {
-    width: 50px;
-  }
-  
-  .chat-sidebar {
-    width: 50px;
+    display: none;
   }
 }
