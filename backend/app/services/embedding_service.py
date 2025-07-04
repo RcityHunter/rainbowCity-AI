@@ -18,7 +18,7 @@ from sklearn.metrics.pairwise import cosine_similarity
 import hnswlib
 
 # 导入项目依赖
-from app.db import query, create, update, execute_raw_query
+from app.db import query, create, update, execute_raw_query, run_async
 from app.models.memory_models import MemoryType
 
 
@@ -82,7 +82,8 @@ class EmbeddingService:
                 index = hnswlib.Index(space='cosine', dim=self.vector_dim)
                 
                 # 从数据库加载已有的向量嵌入
-                memories = await query('memory', {'memory_type': memory_type})
+                memories_result = query('memory', {'memory_type': memory_type})
+                memories = await run_async(memories_result)
                 
                 if memories and len(memories) > 0:
                     # 过滤出有嵌入的记忆
@@ -308,7 +309,10 @@ class EmbeddingService:
                 return False
             
             # 更新数据库中的嵌入
-            await update('memory', {'id': memory_id}, {'embedding': embedding})
+            update_result = update('memory', {'id': memory_id}, {'embedding': embedding})
+            
+            # 使用run_async来正确处理异步更新
+            await run_async(update_result)
             
             # 更新索引
             await self.add_to_index(memory_type, memory_id, embedding)
@@ -325,19 +329,24 @@ class EmbeddingService:
             # 检查SurrealDB版本是否支持向量索引
             # 注意：这需要SurrealDB 1.0.0+才支持
             version_query = "INFO FOR DB"
-            version_result = await execute_raw_query(version_query)
+            version_result_coro = execute_raw_query(version_query)
+            
+            # 使用run_async来正确处理异步查询
+            version_result = await run_async(version_result_coro)
             
             logging.info(f"数据库信息: {version_result}")
             
-            # 创建向量索引的SQL（如果SurrealDB支持）
-            # 这是一个示例，实际语法可能需要根据SurrealDB的版本调整
+            # 创建向量索引的SQL（使用SurrealDB最新语法）
+            # 使用HNSW索引，这是高维向量的最佳选择
             index_query = """
-            DEFINE INDEX memory_vector ON TABLE memory FIELDS embedding 
-            VECTOR 384 COSINE;
+            DEFINE INDEX memory_vector ON memory FIELDS embedding HNSW DIMENSION 384;
             """
             
             try:
-                index_result = await execute_raw_query(index_query)
+                index_result_coro = execute_raw_query(index_query)
+                
+                # 使用run_async来正确处理异步查询
+                index_result = await run_async(index_result_coro)
                 logging.info(f"创建向量索引结果: {index_result}")
                 return True
             except Exception as e:

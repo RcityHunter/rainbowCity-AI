@@ -72,8 +72,10 @@ export const login = async (email, password) => {
     console.log('Attempting login for:', email);
     // 使用 FastAPI OAuth2 格式发送登录请求
     const formData = new URLSearchParams();
-    formData.append('username', email);  // FastAPI OAuth2 使用 username 字段
+    formData.append('username', email);  // FastAPI OAuth2 使用 username 字段，但我们传入邮箱
     formData.append('password', password);
+    
+    console.log('Using email as login credential:', email);
     
     const response = await axios.post(API_URL + 'login', formData, {
       headers: {

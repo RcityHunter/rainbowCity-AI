@@ -143,7 +143,7 @@ async def google_callback(request: Request):
         logger.info(f"Processing Google OAuth for email: {email}")
         
         # 检查用户是否已存在
-        existing_users = await query('users', {'email': email})
+        existing_users = query('users', {'email': email})
         
         if existing_users and len(existing_users) > 0:
             # 用户已存在，更新OAuth信息
@@ -161,7 +161,7 @@ async def google_callback(request: Request):
                 'access_token': access_token
             }
             
-            await db_update('users', user_id, {'oauth_info': oauth_info})
+            db_update('users', user_id, {'oauth_info': oauth_info})
             logger.info(f"Updated OAuth info for existing user: {user_id}")
         else:
             # 创建新用户
@@ -203,7 +203,7 @@ async def google_callback(request: Request):
             }
             
             # 在模拟模式下，手动存储用户数据
-            created_user = await create('users', user)
+            created_user = create('users', user)
             logger.info(f"Created new user with ID: {user_id}")
             
             # 在模拟模式下，将用户对象保存到内存中以便于后续查询
@@ -222,22 +222,22 @@ async def google_callback(request: Request):
         
         # 获取用户信息返回给前端 - 尝试多种可能的查询方式
         logger.info(f"Querying user with original ID: {user_id}")
-        user_data = await query('users', {'id': user_id})
+        user_data = query('users', {'id': user_id})
         
         # 如果查询失败，尝试使用email查询（更可靠）
         if not user_data or len(user_data) == 0:
             logger.info(f"Original ID query failed, trying with email: {email}")
-            user_data = await query('users', {'email': email})
+            user_data = query('users', {'email': email})
             
         # 如果仍然失败，尝试使用格式化的ID查询
         if not user_data or len(user_data) == 0:
             formatted_id = f"users:{user_id}"
             logger.info(f"Email query failed, trying with formatted ID: {formatted_id}")
-            user_data = await query('users', {'id': formatted_id})
+            user_data = query('users', {'id': formatted_id})
             
         # 如果所有尝试都失败，记录调试信息
         if not user_data or len(user_data) == 0:
-            all_users = await query('users', {})
+            all_users = query('users', {})
             logger.error(f"Failed to find user after creation. User ID: {user_id}, Email: {email}")
             logger.error(f"Total users in database: {len(all_users)}")
             for u in all_users:
@@ -390,7 +390,7 @@ async def github_callback(request: Request):
         logger.info(f"Processing GitHub OAuth for email: {email}")
         
         # 检查用户是否已存在
-        existing_users = await query('users', {'email': email})
+        existing_users = query('users', {'email': email})
         
         if existing_users and len(existing_users) > 0:
             # 用户已存在，更新OAuth信息
@@ -409,7 +409,7 @@ async def github_callback(request: Request):
                 'access_token': access_token
             }
             
-            await db_update('users', user_id, {'oauth_info': oauth_info})
+            db_update('users', user_id, {'oauth_info': oauth_info})
             logger.info(f"Updated OAuth info for existing user: {user_id}")
         else:
             # 创建新用户
@@ -451,7 +451,7 @@ async def github_callback(request: Request):
                 'oauth_provider': 'github'
             }
             
-            await create('users', user)
+            create('users', user)
             logger.info(f"Created new user with ID: {user_id}")
             
         # 创建访问令牌
@@ -461,22 +461,22 @@ async def github_callback(request: Request):
         
         # 获取用户信息返回给前端 - 尝试多种可能的查询方式
         logger.info(f"Querying user with original ID: {user_id}")
-        user_data = await query('users', {'id': user_id})
+        user_data = query('users', {'id': user_id})
         
         # 如果查询失败，尝试使用email查询（更可靠）
         if not user_data or len(user_data) == 0:
             logger.info(f"Original ID query failed, trying with email: {email}")
-            user_data = await query('users', {'email': email})
+            user_data = query('users', {'email': email})
             
         # 如果仍然失败，尝试使用格式化的ID查询
         if not user_data or len(user_data) == 0:
             formatted_id = f"users:{user_id}"
             logger.info(f"Email query failed, trying with formatted ID: {formatted_id}")
-            user_data = await query('users', {'id': formatted_id})
+            user_data = query('users', {'id': formatted_id})
             
         # 如果所有尝试都失败，记录调试信息
         if not user_data or len(user_data) == 0:
-            all_users = await query('users', {})
+            all_users = query('users', {})
             logger.error(f"Failed to find user after creation. User ID: {user_id}, Email: {email}")
             logger.error(f"Total users in database: {len(all_users)}")
             for u in all_users:

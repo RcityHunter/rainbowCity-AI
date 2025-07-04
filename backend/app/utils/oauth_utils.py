@@ -2,6 +2,7 @@ import os
 import requests
 import json
 import logging
+import httpx
 from typing import Dict, Any, Optional
 
 # 设置日志记录
@@ -277,10 +278,12 @@ async def get_google_user_info(access_token: str) -> Optional[Dict[str, Any]]:
             "Authorization": f"Bearer {access_token}"
         }
         
-        response = requests.get(GOOGLE_USER_INFO_URL, headers=headers)
-        response.raise_for_status()
-        
-        return response.json()
+        # 使用异步HTTP客户端
+        async with httpx.AsyncClient() as client:
+            response = await client.get(GOOGLE_USER_INFO_URL, headers=headers)
+            response.raise_for_status()
+            
+            return response.json()
     except Exception as e:
         logger.error(f"Error getting Google user info: {str(e)}")
         return None

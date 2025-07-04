@@ -78,3 +78,5 @@ class MemoryQuery(BaseModel):
     use_vector_search: bool = True  # 是否使用向量搜索
     metadata_filter: Optional[Dict[str, Any]] = None  # 元数据过滤条件
     embedding: Optional[List[float]] = None  # 查询的向量嵌入（如果已经生成）
+    session_id: Optional[str] = None  # 会话ID（可选）
+    tags: Optional[List[str]] = None  # 标签列表（可选）

@@ -112,17 +112,28 @@ class ChatService:
             # 优先使用 message 表的结果作为返回值，因为前端主要使用该表
             saved_message = saved_message_table or saved_chat_message
                 
-            # 临时禁用会话更新，避免数据库阻塞
-            # 注释掉会话更新代码，以确保消息流程不会被阻塞
-            # await ChatService.update_session(
-            #     session_id, 
-            #     user_id, 
-            #     last_message=content[:50] + "..." if len(content) > 50 else content,
-            #     last_message_time=created_at
-            # )
+            # 使用异步任务更新会话，避免阻塞主流程
+            async def update_session_task():
+                try:
+                    # 添加超时处理
+                    await asyncio.wait_for(
+                        ChatService.update_session(
+                            session_id=session_id, 
+                            user_id=user_id, 
+                            last_message=content[:50] + "..." if len(content) > 50 else content,
+                            last_message_time=created_at
+                        ),
+                        timeout=10.0
+                    )
+                    logging.info(f"会话更新成功: session_id={session_id}")
+                except asyncio.TimeoutError:
+                    logging.error(f"会话更新超时(10秒): session_id={session_id}")
+                except Exception as e:
+                    logging.error(f"会话更新失败: session_id={session_id}, error={str(e)}")
             
-            # 记录日志，表明我们跳过了会话更新
-            logging.info(f"临时跳过会话更新以避免阻塞: session_id={session_id}")
+            # 创建异步任务但不等待完成
+            asyncio.create_task(update_session_task())
+            logging.info(f"异步更新会话任务已创建: session_id={session_id}")
             
             return saved_message or message_data
         except Exception as e:
@@ -242,16 +253,43 @@ class ChatService:
             消息记录列表
         """
         try:
-            # 查询消息记录
+            import asyncio
+            messages = []
+            
             # 先尝试使用chat_id查询
             query_result = query('chat_messages', {'chat_id': session_id}, sort=[('created_at', 'ASC')], limit=limit, offset=offset)
             
             # 检查结果是否为协程并等待它
-            import asyncio
             if asyncio.iscoroutine(query_result):
-                messages = await query_result
+                try:
+                    # 添加15秒超时
+                    result = await asyncio.wait_for(query_result, timeout=15.0)
+                    # 确保结果是列表类型
+                    if result is None:
+                        result = []
+                    elif not isinstance(result, list):
+                        if isinstance(result, dict):
+                            result = [result]
+                        else:
+                            logging.error(f"获取会话消息返回意外类型: {type(result)}, session_id={session_id}")
+                            result = []
+                    messages = result
+                except asyncio.TimeoutError:
+                    logging.error(f"获取会话消息超时(15秒): session_id={session_id}")
+                except Exception as e:
+                    logging.error(f"获取会话消息失败: {str(e)}")
             else:
-                messages = query_result
+                # 处理非协程结果
+                if query_result is None:
+                    messages = []
+                elif not isinstance(query_result, list):
+                    if isinstance(query_result, dict):
+                        messages = [query_result]
+                    else:
+                        logging.error(f"获取会话消息返回意外类型: {type(query_result)}, session_id={session_id}")
+                        messages = []
+                else:
+                    messages = query_result
                 
             # 如果没有找到消息，尝试使用session_id查询
             if not messages:
@@ -259,11 +297,36 @@ class ChatService:
                 query_result = query('chat_messages', {'session_id': session_id}, sort=[('created_at', 'ASC')], limit=limit, offset=offset)
                 
                 if asyncio.iscoroutine(query_result):
-                    messages = await query_result
+                    try:
+                        # 添加15秒超时
+                        result = await asyncio.wait_for(query_result, timeout=15.0)
+                        # 确保结果是列表类型
+                        if result is None:
+                            result = []
+                        elif not isinstance(result, list):
+                            if isinstance(result, dict):
+                                result = [result]
+                            else:
+                                logging.error(f"获取会话消息返回意外类型: {type(result)}, session_id={session_id}")
+                                result = []
+                        messages = result
+                    except asyncio.TimeoutError:
+                        logging.error(f"获取会话消息超时(15秒): session_id={session_id}")
+                    except Exception as e:
+                        logging.error(f"获取会话消息失败: {str(e)}")
                 else:
-                    messages = query_result
+                    # 处理非协程结果
+                    if query_result is None:
+                        pass  # 保持messages不变
+                    elif not isinstance(query_result, list):
+                        if isinstance(query_result, dict):
+                            messages = [query_result]
+                        else:
+                            logging.error(f"获取会话消息返回意外类型: {type(query_result)}, session_id={session_id}")
+                    else:
+                        messages = query_result
             
-            return messages or []
+            return messages
         except Exception as e:
             logging.error(f"获取聊天消息失败: {str(e)}")
             return []
@@ -305,6 +368,18 @@ class ChatService:
                     return []
             else:
                 sessions = query_result
+            
+            # 确保结果是列表类型
+            if sessions is None:
+                logging.warning(f"获取用户会话返回None: user_id={user_id}")
+                sessions = []
+            elif not isinstance(sessions, list):
+                if isinstance(sessions, dict):
+                    logging.warning(f"获取用户会话返回字典而非列表: user_id={user_id}")
+                    sessions = [sessions]
+                else:
+                    logging.error(f"获取用户会话返回意外类型: {type(sessions)}, user_id={user_id}")
+                    sessions = []
             
             query_time = time.time() - start_time
             if query_time > 1.0:  # 记录执行时间超过1秒的查询

@@ -55,19 +55,13 @@ async def is_connection_alive():
     """检查数据库连接是否正常"""
     global _db
     if _db is None:
-        logging.warning("数据库连接不存在")
         return False
     
     try:
         # 尝试执行一个简单的查询
-        result = _db.query('INFO FOR DB')
-        if result:
-            logging.info("数据库连接测试成功")
-            return True
-        logging.warning("数据库连接测试返回空结果")
-        return False
-    except Exception as e:
-        logging.warning(f"数据库连接测试失败: {str(e)}")
+        await _db.query('INFO FOR DB')
+        return True
+    except Exception:
         return False
 
 # 初始化数据库连接
@@ -109,8 +103,7 @@ async def init_db_connection():
             if _db is not None:
                 try:
                     logging.info("关闭旧的数据库连接")
-                    # SurrealDB的close方法不是异步的，不需要await
-                    _db.close()
+                    await _db.close()
                 except Exception as e:
                     logging.error(f"关闭旧连接出错: {str(e)}")
             
@@ -158,51 +151,27 @@ async def init_db_connection():
         logging.error(f"初始化数据库连接时出错: {str(e)}")
         return None
 
-# 获取数据库连接
+# 异步获取数据库连接
 async def get_db():
-    """获取数据库连接，并处理自动重连"""
+    """获取数据库连接"""
     global _db, USE_MOCK_MODE
     
     # 如果使用模拟模式，直接返回None
     if USE_MOCK_MODE:
         return None
     
-    # 使用锁确保只有一个协程在检查和初始化连接
-    async with _db_lock:
-        # 如果连接不存在，初始化连接
-        if _db is None:
-            logging.info("数据库连接不存在，初始化新连接")
-            await init_db_connection()
-            if _db is None:
-                logging.error("无法初始化数据库连接，返回None")
-                return None
-        
-        # 检查连接是否可用
+    # 如果连接不存在，初始化连接
+    if _db is None:
+        _db = await init_db_connection()
+    else:
+        # 检查连接是否正常
         try:
             if not await is_connection_alive():
                 logging.warning("DB连接已断开，尝试重新连接")
-                # 关闭旧连接
-                try:
-                    if _db is not None:
-                        _db.close()
-                except Exception as close_error:
-                    logging.error(f"关闭旧连接出错: {str(close_error)}")
-                
-                # 创建新连接
-                await init_db_connection()
-                
-                # 再次检查连接是否成功
-                if _db is None or not await is_connection_alive():
-                    logging.error("重新连接失败，返回None")
-                    return None
+                _db = await init_db_connection()
         except Exception as e:
-            logging.error(f"DB连接检查失败: {str(e)}")
-            # 尝试重新初始化连接
-            await init_db_connection()
-            # 如果连接仍然失败，返回None
-            if _db is None:
-                logging.error("重新连接失败，返回None")
-                return None
+            logging.error(f"检查DB连接状态时出错: {str(e)}")
+            _db = await init_db_connection()
     
     return _db
 
@@ -214,7 +183,6 @@ async def close_db_connection():
     if _db is not None:
         try:
             logging.info("关闭数据库连接")
-            # SurrealDB的close方法不是异步的，不需要await
             _db.close()
             _db = None
             logging.info("数据库连接已关闭")
@@ -291,21 +259,12 @@ def init_db(app):
         print("Database connection closed on shutdown")
 
 # 同步创建数据
-def create(table, data, max_retries=2):
-    """在指定表中创建数据
-    
-    Args:
-        table (str): 表名
-        data (dict): 要创建的数据
-        max_retries (int): 最大重试次数
-        
-    Returns:
-        dict: 创建的记录，包含ID
-    """
-    async def _create(retry_count=0):
+def create(table, data):
+    """在指定表中创建数据"""
+    async def _create():
         db = await get_db()
         if db is None:
-            logging.warning(f"DB连接不可用，无法创建数据到表 {table}")
+            print("Using mock mode for create operation")
             # 在模拟模式下，生成一个唯一ID并返回带ID的数据
             if isinstance(data, dict):
                 if 'id' not in data:
@@ -315,122 +274,40 @@ def create(table, data, max_retries=2):
         
         try:
             # 使用SurrealDB的create方法创建记录
-            logging.info(f"Creating data in {table}: {data}")
-            
-            # 确保数据是字典
-            if not isinstance(data, dict):
-                logging.error(f"Cannot create non-dict data: {data}")
-                return None
-                
-            # 创建记录
+            print(f"Creating data in {table}: {data}")
             result = db.create(table, data)
-            logging.info(f"Create result: {result}")
-            
-            # 确保结果是字典类型
-            if result is None:
-                logging.warning(f"创建{table}记录返回None")
-                return None
-            elif isinstance(result, list):
-                logging.warning(f"创建{table}记录返回列表而非字典，尝试提取第一个元素")
-                if len(result) > 0:
-                    result = result[0]  # 取第一个元素
-                else:
-                    logging.error(f"创建{table}记录返回空列表")
-                    return None
-            
-            # 验证创建结果
-            if result:
-                # 验证创建是否成功
-                verify_query = f"SELECT * FROM {table} WHERE id = '{result.get('id')}'"
-                logging.info(f"Verifying creation with query: {verify_query}")
-                verify_result = db.query(verify_query)
-                
-                if verify_result and isinstance(verify_result, list) and len(verify_result) > 0 and 'result' in verify_result[0]:
-                    if len(verify_result[0]['result']) > 0:
-                        logging.info(f"Successfully verified creation of {table} record with ID {result.get('id')}")
-                    else:
-                        logging.warning(f"Created {table} record but could not verify it exists")
-                
-                return result
-            else:
-                logging.error(f"Create operation returned no result for {table}")
-                return None
-                
+            return result
         except Exception as e:
-            logging.error(f"Error creating data in {table}: {str(e)}")
-            
-            # 如果创建失败且未超过最大重试次数，尝试重新连接并重试
-            if retry_count < max_retries:
-                logging.warning(f"创建数据失败，尝试重新连接并重试，重试次数: {retry_count + 1}/{max_retries}")
-                # 强制重新初始化连接
-                global _db
-                try:
-                    if _db is not None:
-                        _db.close()
-                except Exception:
-                    pass
-                _db = None
-                
-                # 等待短暂时间后重试
-                await asyncio.sleep(0.5 * (retry_count + 1))
-                return await _create(retry_count + 1)
-            
-            # 如果创建失败，尝试使用原始SQL查询
+            print(f"Error creating data in {table}: {e}")
+            # 如果创建失败，尝试使用query方法
             try:
-                # 构建INSERT查询
-                fields = ", ".join(data.keys())
-                values_list = []
-                for v in data.values():
-                    if v is None:
-                        values_list.append("NULL")
-                    elif isinstance(v, str):
-                        # 处理字符串中的引号
-                        escaped_v = v.replace("'", "\\'") 
-                        values_list.append(f"'{escaped_v}'")
-                    elif isinstance(v, (list, dict)):
-                        # 将对象和数组转换为JSON字符串
-                        import json
-                        json_str = json.dumps(v).replace("'", "\\'") 
-                        values_list.append(f"'{json_str}'")
-                    else:
-                        values_list.append(str(v))
-                        
-                values = ", ".join(values_list)
-                query_str = f"INSERT INTO {table} ({fields}) VALUES ({values}) RETURN AFTER"
-                logging.info(f"Executing insert query: {query_str}")
-                result = db.query(query_str)
-                
-                if result and isinstance(result, list) and len(result) > 0 and 'result' in result[0]:
-                    if len(result[0]['result']) > 0:
-                        logging.info(f"Successfully inserted {table} record using SQL")
-                        return result[0]['result'][0]
-                    else:
-                        logging.warning(f"Insert query returned empty result")
-                        return None
+                if isinstance(data, dict):
+                    # 构建INSERT查询
+                    fields = ", ".join(data.keys())
+                    values = ", ".join([f"'{v}'" if isinstance(v, str) else str(v) for v in data.values()])
+                    query_str = f"INSERT INTO {table} ({fields}) VALUES ({values})"
+                    print(f"Executing insert query: {query_str}")
+                    result = db.query(query_str)
+                    
+                    if result and isinstance(result, list) and len(result) > 0 and 'result' in result[0]:
+                        return result[0]['result']
+                    return None
                 else:
-                    logging.error(f"Insert query failed: {result}")
+                    print(f"Cannot insert non-dict data: {data}")
                     return None
             except Exception as insert_error:
-                logging.error(f"Error executing insert query: {str(insert_error)}")
+                print(f"Error executing insert query: {insert_error}")
                 return None
     
     return run_async(_create())
 
 # 查询指定表中的数据
-def query(table, condition=None, sort=None, limit=None, offset=None, max_retries=2):
-    # 检查是否使用了None作为条件值，这会导致SQL语法错误
-    if condition:
-        # 确保condition是字典类型
-        if not isinstance(condition, dict):
-            logging.error(f"查询条件必须是字典类型，但收到了 {type(condition)}")
-            return []
-        condition = {k: v for k, v in condition.items() if v is not None}
-        
-    async def _query(retry_count=0):
+def query(table, condition=None, sort=None, limit=None, offset=None):
+    async def _query():
         db = await get_db()
         if db is None:
-            logging.warning(f"数据库连接不可用，无法查询表 {table}")
-            # 在模拟模式下或连接不可用时，返回空列表
+            print("Using mock mode for query operation")
+            # 在模拟模式下，返回空列表
             return []
         
         try:
@@ -441,10 +318,7 @@ def query(table, condition=None, sort=None, limit=None, offset=None, max_retries
             if condition:
                 conditions = []
                 for k, v in condition.items():
-                    if v is None:
-                        # 跳过None值
-                        continue
-                    elif isinstance(v, str):
+                    if isinstance(v, str):
                         conditions.append(f"{k} = '{v}'")
                     else:
                         conditions.append(f"{k} = {v}")
@@ -454,19 +328,8 @@ def query(table, condition=None, sort=None, limit=None, offset=None, max_retries
             # 添加排序
             if sort:
                 sort_clauses = []
-                # 处理不同类型的排序参数
-                if isinstance(sort, dict):
-                    # 如果是字典类型
-                    for field, direction in sort.items():
-                        sort_clauses.append(f"{field} {direction}")
-                elif isinstance(sort, list):
-                    # 如果是列表类型
-                    for item in sort:
-                        if isinstance(item, tuple) and len(item) == 2:
-                            field, direction = item
-                            sort_clauses.append(f"{field} {direction}")
-                        else:
-                            logging.warning(f"排序参数格式不正确: {item}")
+                for field, direction in sort.items():
+                    sort_clauses.append(f"{field} {direction}")
                 if sort_clauses:
                     query_str += " ORDER BY " + ", ".join(sort_clauses)
             
@@ -478,69 +341,18 @@ def query(table, condition=None, sort=None, limit=None, offset=None, max_retries
             if offset:
                 query_str += f" START {offset}"
             
-            logging.info(f"Executing query: {query_str}")
+            print(f"Executing query: {query_str}")
             
             # 执行查询
             # 注意：SurrealDB 的 query 方法是同步的，不需要 await
             result = db.query(query_str)
-            logging.info(f"查询结果类型: {type(result)}, 内容: {result}")
             
-            # 处理查询结果 - 兼容不同版本的SurrealDB SDK返回格式
-            if result is None:
-                logging.info("查询结果为None")
-                return []
-            
-            # 如果是列表
-            if isinstance(result, list):
-                # 如果是旧格式，包含'result'键
-                if len(result) > 0 and isinstance(result[0], dict) and 'result' in result[0]:
-                    result_data = result[0]['result']
-                    logging.info(f"旧格式结果，处理后类型: {type(result_data)}")
-                    
-                    # 确保返回的是列表
-                    if result_data is None:
-                        return []
-                    elif not isinstance(result_data, list):
-                        if isinstance(result_data, dict):
-                            return [result_data]
-                        else:
-                            logging.warning(f"查询结果类型异常: {type(result_data)}")
-                            return []
-                    return result_data
-                # 如果是新格式，直接返回列表
-                else:
-                    logging.info(f"新格式结果，返回 {len(result)} 条记录")
-                    return result
-            # 如果是字典类型，将其包装为列表
-            elif isinstance(result, dict):
-                logging.info(f"字典类型结果，包装为列表")
-                return [result]
-            # 如果是其他类型，返回空列表
-            else:
-                logging.warning(f"意外类型的查询结果: {type(result)}")
-                return []
-            
-            logging.info("查询成功，但没有找到匹配的记录")
+            # 处理查询结果
+            if result and isinstance(result, list) and len(result) > 0 and 'result' in result[0]:
+                return result[0]['result']
             return []
         except Exception as e:
-            logging.error(f"查询表 {table} 时出错: {str(e)}")
-            
-            # 如果是连接错误且未超过最大重试次数，尝试重新连接并重试
-            if retry_count < max_retries:
-                logging.warning(f"尝试重新连接并重试查询，重试次数: {retry_count + 1}/{max_retries}")
-                # 强制重新初始化连接
-                global _db
-                try:
-                    if _db is not None:
-                        _db.close()
-                except Exception:
-                    pass
-                _db = None
-                
-                # 等待短暂时间后重试
-                await asyncio.sleep(0.5 * (retry_count + 1))
-                return await _query(retry_count + 1)
-            
+            print(f"Error querying data from {table}: {e}")
             return []
     
     # 使用修改后的 run_async 函数，它会正确处理同步和异步上下文
@@ -575,56 +387,31 @@ def update(table, id, data):
     return run_async(_update())
 
 # 执行原始SQL查询
-async def execute_raw_query(query_str, max_retries=2):
+async def execute_raw_query(query_str):
     """执行原始SQL查询
     
     Args:
         query_str (str): SQL查询字符串
-        max_retries (int): 最大重试次数
         
     Returns:
         Any: 查询结果
     """
-    async def _execute_query(retry_count=0):
-        db = await get_db()
-        if db is None:
-            logging.warning("DB连接不可用，无法执行原始SQL查询")
-            return None
-        
-        try:
-            logging.info(f"Executing raw query: {query_str}")
-            # 注意：query 方法不是异步的，不需要 await
-            result = db.query(query_str)
-            logging.info(f"原始SQL查询执行成功，结果类型: {type(result)}, 结果: {result}")
-            
-            # 处理查询结果 - 兼容不同版本的SurrealDB SDK返回格式
-            # 注意：不要对结果进行额外处理，直接返回原始结果
-            # 调用者应该处理不同格式的结果
-            return result
-            
-        except Exception as e:
-            logging.error(f"Error executing raw query: {str(e)}")
-            
-            # 如果是连接错误且未超过最大重试次数，尝试重新连接并重试
-            if retry_count < max_retries:
-                logging.warning(f"原始SQL查询失败，尝试重新连接并重试，重试次数: {retry_count + 1}/{max_retries}")
-                # 强制重新初始化连接
-                global _db
-                try:
-                    if _db is not None:
-                        _db.close()
-                except Exception:
-                    pass
-                _db = None
-                
-                # 等待短暂时间后重试
-                await asyncio.sleep(0.5 * (retry_count + 1))
-                return await _execute_query(retry_count + 1)
-            
-            # 超过重试次数，返回空结果
-            return None
+    db = await get_db()
+    if db is None:
+        print("Using mock mode for raw query operation")
+        return None
     
-    return await _execute_query()
+    try:
+        print(f"Executing raw query: {query_str}")
+        # 注意：query 方法不是异步的，不需要 await
+        result = db.query(query_str)
+        
+        if result and isinstance(result, list) and len(result) > 0 and 'result' in result[0]:
+            return result[0]['result']
+        return result
+    except Exception as e:
+        print(f"Error executing raw query: {e}")
+        raise
 
 # 创建一个数据库会话对象，用于兼容SQLAlchemy风格的代码
 class DBSession:

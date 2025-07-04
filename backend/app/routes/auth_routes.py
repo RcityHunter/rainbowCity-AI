@@ -3,6 +3,7 @@ from fastapi.responses import JSONResponse
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from pydantic import BaseModel, Field, validator  # Removed EmailStr import temporarily
 from typing import Dict, Any, Optional, List, Union
+import asyncio
 from datetime import datetime, timedelta
 import uuid
 import re
@@ -159,12 +160,24 @@ async def register(user: UserRegister):
             )
             
         # 检查邮箱是否已存在
-        existing_users = await query('users', {'email': user.email})
+        existing_users_result = query('users', {'email': user.email})
+        # 检查是否为协程并等待结果
+        if asyncio.iscoroutine(existing_users_result):
+            existing_users = await existing_users_result
+        else:
+            existing_users = existing_users_result
+            
         if existing_users and len(existing_users) > 0:
             raise HTTPException(status_code=400, detail="Email already registered")
             
         # 检查用户名是否已存在
-        existing_usernames = await query('users', {'username': user.username})
+        existing_usernames_result = query('users', {'username': user.username})
+        # 检查是否为协程并等待结果
+        if asyncio.iscoroutine(existing_usernames_result):
+            existing_usernames = await existing_usernames_result
+        else:
+            existing_usernames = existing_usernames_result
+            
         if existing_usernames and len(existing_usernames) > 0:
             raise HTTPException(status_code=400, detail="Username already taken")
             
@@ -172,7 +185,13 @@ async def register(user: UserRegister):
         invite_benefits = {}
         if user.invite_code:
             # 查找邀请码
-            invites = await query('invite_code', {'code': user.invite_code})
+            invites_result = query('invite_code', {'code': user.invite_code})
+            
+            # 检查是否为协程并等待结果
+            if asyncio.iscoroutine(invites_result):
+                invites = await invites_result
+            else:
+                invites = invites_result
             
             if not invites or len(invites) == 0:
                 raise HTTPException(status_code=400, detail="Invalid invite code")
@@ -190,7 +209,11 @@ async def register(user: UserRegister):
             invite_benefits = invite.get('benefits', {})
             
             # 更新邀请码使用次数
-            await db_update('invite_code', invite.get('id'), {'used_count': invite.get('used_count', 0) + 1})
+            update_result = db_update('invite_code', invite.get('id'), {'used_count': invite.get('used_count', 0) + 1})
+            
+            # 检查是否为协程并等待结果
+            if asyncio.iscoroutine(update_result):
+                await update_result
             
         # 使用新的密码哈希函数
         password_hash = get_password_hash(user.password)
@@ -216,7 +239,13 @@ async def register(user: UserRegister):
         }
         
         # 创建用户
-        result = await create('users', user_data)
+        create_result = create('users', user_data)
+        
+        # 检查是否为协程并等待结果
+        if asyncio.iscoroutine(create_result):
+            result = await create_result
+        else:
+            result = create_result
         
         if not result:
             raise HTTPException(status_code=500, detail="Failed to create user")
@@ -229,11 +258,16 @@ async def register(user: UserRegister):
         access_token = create_access_token(token_data)
         
         # 返回用户信息和认证令牌
+        # 确保用户ID被正确序列化为字符串
+        user_id = result.get('id')
+        if hasattr(user_id, '__str__'):
+            user_id = str(user_id)
+            
         return {
             "access_token": access_token,
             "token_type": "bearer",
             "user": {
-                "id": result.get('id'),
+                "id": user_id,
                 "email": user.email,
                 "username": user.username,
                 "display_name": user.display_name or user.username,
@@ -278,11 +312,16 @@ async def login(form_data: OAuth2PasswordRequestForm = Depends()):
         access_token = create_access_token(token_data)
         
         # 返回用户信息和认证令牌
+        # 确保用户ID被正确序列化为字符串
+        user_id = user.get('id')
+        if hasattr(user_id, '__str__'):
+            user_id = str(user_id)
+            
         return {
             "access_token": access_token,
             "token_type": "bearer",
             "user": {
-                "id": user.get('id'),
+                "id": user_id,
                 "email": user.get('email'),
                 "username": user.get('username'),
                 "display_name": user.get('display_name'),

@@ -1,15 +1,38 @@
 import logging
 import time
-import asyncio
-from fastapi import FastAPI, Request, Response, APIRouter
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse
-from starlette.middleware.base import BaseHTTPMiddleware
-import os
 import gc
+import json
+import os
+import asyncio
+from fastapi import FastAPI, Request, APIRouter
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+from fastapi.staticfiles import StaticFiles
+from fastapi.exceptions import RequestValidationError
+from starlette.middleware.base import BaseHTTPMiddleware
+from surrealdb.data.types.record_id import RecordID
 from dotenv import load_dotenv
 from .db import init_db_connection, close_db
+
+# 自定义JSON编码器，处理SurrealDB的RecordID类型
+class CustomJSONEncoder(json.JSONEncoder):
+    def default(self, obj):
+        if isinstance(obj, RecordID):
+            # 将RecordID转换为字符串
+            return str(obj)
+        return super().default(obj)
+
+# 自定义JSONResponse类，使用自定义编码器
+class CustomJSONResponse(JSONResponse):
+    def render(self, content):
+        return json.dumps(
+            content,
+            ensure_ascii=False,
+            allow_nan=False,
+            indent=None,
+            separators=(",", ":"),
+            cls=CustomJSONEncoder,
+        ).encode("utf-8")
 
 # 设置向量嵌入模型环境变量（如果未设置）
 if not os.getenv('EMBEDDING_MODEL'):
@@ -25,9 +48,13 @@ load_dotenv()
 
 # 创建 FastAPI 应用
 app = FastAPI(
-    title="彩虹城 AI API",
-    description="彩虹城 AI 共生社区后端 API",
-    version="1.0.0"
+    title="RainbowCity AI API",
+    description="RainbowCity AI 后端API服务",
+    version="0.1.0",
+    docs_url="/api/docs",
+    redoc_url="/api/redoc",
+    openapi_url="/api/openapi.json",
+    default_response_class=CustomJSONResponse  # 使用自定义的JSONResponse处理SurrealDB的RecordID
 )
 
 # 添加全局异常处理器
@@ -52,15 +79,22 @@ async def startup_db_client():
     await init_db_connection()
     print("Database connection initialized on startup")
     
-    # 初始化向量存储
+    # 初始化向量存储 - 使用后台任务方式，避免阻塞启动流程
     from .services.initialize_vector_storage import initialize_vector_storage
-    try:
-        print("开始初始化向量存储...")
-        await initialize_vector_storage()
-        print("向量存储初始化完成")
-    except Exception as e:
-        print(f"向量存储初始化失败: {str(e)}")
-        logging.error(f"向量存储初始化失败: {str(e)}")
+    
+    async def background_init():
+        try:
+            print("开始初始化向量存储...")
+            # 不等待结果，让它在后台运行
+            asyncio.create_task(initialize_vector_storage())
+            print("向量存储初始化任务已启动")
+        except Exception as e:
+            print(f"创建向量存储初始化任务失败: {str(e)}")
+            logging.error(f"创建向量存储初始化任务失败: {str(e)}")
+    
+    # 创建后台任务但不等待它
+    asyncio.create_task(background_init())
+    print("向量存储初始化已安排在后台运行")
 
 @app.on_event("shutdown")
 async def shutdown_db_client():
@@ -68,6 +102,7 @@ async def shutdown_db_client():
     print("Database connection closed on shutdown")
 
 # 自定义中间件类来处理资源清理和请求超时
+
 class ResourceCleanupMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         request_id = f"{int(time.time())}-{id(request)}"
@@ -91,7 +126,7 @@ class ResourceCleanupMiddleware(BaseHTTPMiddleware):
             logging.error(f"[资源中间件-{request_id}] 请求处理异常: {str(e)}")
             # 强制进行垃圾回收
             gc.collect()
-            return JSONResponse(
+            return CustomJSONResponse(
                 status_code=500,
                 content={"detail": "Internal Server Error", "error": str(e)}
             )

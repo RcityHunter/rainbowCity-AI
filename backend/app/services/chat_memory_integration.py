@@ -174,6 +174,10 @@ class ChatMemoryIntegration:
                 self.get_relevant_memories(user_id, user_message, limit=5),
                 timeout=3.0  # 3秒超时
             )
+            # 确保返回的是列表类型
+            if not isinstance(relevant_memories, list):
+                logging.warning(f"检索返回了非列表类型的结果: {type(relevant_memories)}")
+                relevant_memories = []
             result["relevant_memories"] = relevant_memories
             logging.info(f"成功检索到{len(relevant_memories)}条相关记忆")
         except TimeoutError:

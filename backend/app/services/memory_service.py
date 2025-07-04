@@ -340,68 +340,69 @@ class MemoryService:
             logging.error(f"获取会话摘要失败: {str(e)}")
             return None
     
-    @staticmethod
-    async def search_memories(query_params: MemoryQuery) -> List[Dict[str, Any]]:
+    @classmethod
+    async def search_memories(cls, query_params: MemoryQuery) -> List[Dict[str, Any]]:
         """
         搜索记忆
         
         Args:
-            query_params: 查询参数
+            query_params: 搜索参数
             
         Returns:
-            匹配的记忆列表
+            符合条件的记忆列表
         """
-        # 如果启用了向量搜索但没有提供嵌入，则生成嵌入
-        if query_params.use_vector_search and not query_params.embedding and query_params.query:
-            try:
-                query_params.embedding = await embedding_service.generate_embedding(query_params.query)
-            except Exception as e:
-                logging.error(f"为查询生成嵌入失败: {str(e)}")
-                # 如果生成嵌入失败，回退到关键词搜索
-                query_params.use_vector_search = False
         try:
-            # 构建基本查询条件
-            db_query = {'user_id': query_params.user_id}
+            # 构建查询条件
+            query_conditions = {}
             
+            # 添加用户ID过滤
+            if query_params.user_id:
+                query_conditions['user_id'] = query_params.user_id
+                
             # 添加记忆类型过滤
             if query_params.memory_type:
-                db_query['memory_type'] = query_params.memory_type
+                query_conditions['memory_type'] = query_params.memory_type
                 
-            # 添加元数据过滤
-            if query_params.metadata_filter:
-                for key, value in query_params.metadata_filter.items():
-                    db_query[f'metadata.{key}'] = value
-                    
-            # 确定排序方式
-            sort_field = 'updated_at'
-            sort_order = 'DESC'  # 降序
-            
-            if query_params.sort_by == "importance":
-                sort_field = 'importance'
-                sort_order = 'DESC'
-            
-            # 添加超时处理，防止数据库查询挂起
-            import asyncio
-            from asyncio import TimeoutError
-            
+            # 添加会话ID过滤
+            if query_params.session_id:
+                query_conditions['session_id'] = query_params.session_id
+                
+            # 添加标签过滤
+            if query_params.tags and len(query_params.tags) > 0:
+                # 注意：这里需要根据数据库的实际支持情况调整
+                # 这里使用简化的实现，只查询包含第一个标签的记忆
+                query_conditions['tags'] = query_params.tags[0]
+                
+            # 构建排序参数
+            sort_params = {}
+            if query_params.sort_by == "recency":
+                sort_params['updated_at'] = 'DESC'
+            elif query_params.sort_by == "importance":
+                sort_params['importance'] = 'DESC'
+            elif query_params.sort_by == "access_count":
+                sort_params['access_count'] = 'DESC'
+            else:
+                # 默认按时间排序
+                sort_params['updated_at'] = 'DESC'
+                
+            # 执行数据库查询
             try:
-                # 执行查询，添加5秒超时
-                results = await asyncio.wait_for(
-                    query(
-                        'memory',
-                        db_query,
-                        sort=[(sort_field, sort_order)],
-                        limit=query_params.limit,
-                        offset=query_params.offset
-                    ),
-                    timeout=5.0  # 5秒超时
-                )
-            except TimeoutError:
-                logging.error("数据库查询超时，返回空结果")
-                return []  # 超时时返回空结果
-            except Exception as db_error:
-                logging.error(f"数据库查询错误: {str(db_error)}")
-                return []  # 查询错误时返回空结果
+                # 查询记忆
+                results = await query('memory', query_conditions, sort=sort_params, limit=query_params.limit, offset=query_params.offset)
+                
+                # 确保结果是列表类型
+                if results is None:
+                    results = []
+                elif not isinstance(results, list):
+                    # 如果返回的不是列表，将其转换为列表
+                    if isinstance(results, dict):
+                        results = [results]
+                    else:
+                        logging.error(f"查询返回了意外的类型: {type(results)}，转换为空列表")
+                        results = []
+            except Exception as e:
+                logging.error(f"查询记忆表失败: {str(e)}")
+                return []
             
             # 如果使用向量搜索且有嵌入
             if query_params.use_vector_search and query_params.embedding:
@@ -443,10 +444,6 @@ class MemoryService:
                             )
                             all_similar_memories.extend(similar)
                         
-                        # 按相似度排序并限制数量
-                        all_similar_memories.sort(key=lambda x: x[1], reverse=True)
-                        all_similar_memories = all_similar_memories[:query_params.limit]
-                        
                         # 获取搜索结果的完整记忆数据
                         if all_similar_memories:
                             memory_ids = [mem_id for mem_id, _ in all_similar_memories]
@@ -461,30 +458,53 @@ class MemoryService:
                             # 替换结果集
                             if vector_results:
                                 results = vector_results
-                except Exception as vector_error:
-                    logging.error(f"向量搜索失败: {str(vector_error)}")
-                    # 向量搜索失败时，回退到传统搜索方法
+                except Exception as e:
+                    logging.error(f"向量搜索失败: {str(e)}")
             
-            # 如果没有使用向量搜索或向量搜索失败，使用传统排序方法
-            if not query_params.use_vector_search or query_params.sort_by != "vector":
-                # 根据排序方式排序
-                if query_params.sort_by == "recency":
-                    # 按创建时间排序
-                    results = sorted(results, key=lambda x: x.get('created_at', ''), reverse=True)
-                elif query_params.sort_by == "importance":
-                    # 按重要性排序
-                    results = sorted(results, key=lambda x: x.get('importance', 0), reverse=True)
-                elif query_params.sort_by == "relevance":
-                    # 按相关性排序（关键词匹配）
-                    try:
+            # 如果启用了向量搜索，并且有查询文本，则进行向量搜索
+            if query_params.use_vector_search and query_params.query and results:
+                try:
+                    # 生成查询的向量嵌入
+                    query_embedding = await embedding_service.get_embedding(query_params.query)
+                    
+                    if query_embedding:
+                        # 计算每个记忆与查询的余弦相似度
+                        for memory in results:
+                            memory_embedding = memory.get('embedding')
+                            if memory_embedding:
+                                similarity = embedding_service.calculate_similarity(query_embedding, memory_embedding)
+                                memory['similarity_score'] = similarity
+                            else:
+                                memory['similarity_score'] = 0
+                        
+                        # 按相似度排序
+                        results = sorted(results, key=lambda x: x.get('similarity_score', 0), reverse=True)
+                except Exception as e:
+                    logging.error(f"向量搜索失败: {str(e)}")
+
+            
+            # 应用排序
+            if results and (not query_params.use_vector_search or not query_params.query):
+                try:
+                    if query_params.sort_by == "recency":
+                        # 按时间排序（最新的在前）
+                        results = sorted(results, key=lambda x: x.get('updated_at', ''), reverse=True)
+                    elif query_params.sort_by == "importance":
+                        # 按重要性排序
+                        results = sorted(results, key=lambda x: x.get('importance', MemoryImportance.LOW), reverse=True)
+                    elif query_params.sort_by == "access_count":
+                        # 按访问次数排序
+                        results = sorted(results, key=lambda x: x.get('access_count', 0), reverse=True)
+                    elif query_params.sort_by == "relevance":
+                        # 按相关性排序（关键词匹配）
                         results = sorted(
                             results,
                             key=lambda x: _calculate_relevance(x, query_params.query),
                             reverse=True
                         )
-                    except Exception as sort_error:
-                        logging.error(f"相关性排序错误: {str(sort_error)}")
-                        # 排序错误时，返回未排序的结果
+                except Exception as sort_error:
+                    logging.error(f"相关性排序错误: {str(sort_error)}")
+
             
             # 更新访问时间和计数 - 使用异步任务处理，不阻塞主流程
             async def update_memory_access(memory):

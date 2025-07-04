@@ -52,10 +52,16 @@ async def process_memory_type(memory_type: MemoryType):
         logging.info(f"开始处理 {memory_type.value} 类型的记忆...")
         
         # 查询没有向量嵌入的记忆
-        memories = await query('memory', {
+        memories_result = query('memory', {
             'memory_type': memory_type.value,
             'embedding': None
         })
+        
+        # 检查是否为协程并等待结果
+        if asyncio.iscoroutine(memories_result):
+            memories = await memories_result
+        else:
+            memories = memories_result
         
         if not memories:
             logging.info(f"没有找到需要处理的 {memory_type.value} 记忆")
