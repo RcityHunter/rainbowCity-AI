@@ -559,16 +559,14 @@ function AiChat() {
       content,
       type,
       // 如果提供了时间戳，使用提供的时间戳，否则使用当前时间
-      timestamp: timestamp || additionalData.timestamp || new Date().toISOString(),
+      timestamp: timestamp || new Date().toISOString(),
       visible: true,
-      // 只有AI助手消息使用打字机效果，用户消息永远不使用
-      isTyping: role === SenderRole.ASSISTANT ? true : false,
-      // 助手消息初始显示内容为空，用户消息显示完整内容
-      displayedContent: role === SenderRole.ASSISTANT ? '' : content,
+      isTyping: false,
+      displayedContent: content
     };
     
-    // 如果是混合消息，确保数据结构正确
-    if (type === MessageType.MIXED && additionalData.attachment) {
+    // 如果是图片或其他文件类型，添加附件数据
+    if (type === MessageType.IMAGE || type === MessageType.AUDIO || type === MessageType.VIDEO || type === MessageType.DOCUMENT) {
       message.data = {
         attachment: additionalData.attachment
       };
@@ -586,9 +584,10 @@ function AiChat() {
       content: result.content ? '长度:' + result.content.length : '空'
     });
     
+    // 返回创建的消息对象
     return result;
   };
-  
+
   // 创建新聊天
   const handleCreateNewChat = () => {
     // 创建新的会话ID
@@ -637,10 +636,17 @@ function AiChat() {
     };
     
     setConversations(prev => [newConversation, ...prev]);
+    
+    // 将新对话保存到后端数据库
+    // 使用setTimeout确保状态更新后再保存
+    setTimeout(() => {
+      console.log('保存新创建的对话到后端:', initialMessages);
+      saveConversation(initialMessages);
+    }, 100);
   };
-  
-  // 从后端获取用户对话列表
-  const fetchUserConversations = async () => {
+
+// 从后端获取用户对话列表
+const fetchUserConversations = async () => {
   try {
     // 检查用户是否登录
     if (!isAuthenticated()) {
@@ -688,18 +694,21 @@ function AiChat() {
     console.log('获取到的用户对话列表:', data);
     
     if (data && Array.isArray(data.conversations)) {
-      // 处理对话列表数据，确保id是字符串类型
+      // 处理对话列表数据，保留原始ID类型以便正确处理
       const processedConversations = data.conversations.map(conversation => {
-        // 确保id是字符串类型
+        // 保留原始ID类型，包括对象类型
         let id = conversation.id;
-        if (typeof id === 'object') {
-          console.warn('发现对象类型的id:', id);
-          id = JSON.stringify(id); // 将对象转换为字符串
-        } else if (id === undefined || id === null) {
+        console.log('处理对话ID:', id, '类型:', typeof id);
+        
+        if (id === undefined || id === null) {
           console.warn('发现无效的id，生成随机id');
           id = generateUUID(); // 生成一个新的UUID作为id
+        } else if (typeof id !== 'object') {
+          // 如果不是对象，确保是字符串类型
+          id = String(id);
         } else {
-          id = String(id); // 确保id是字符串类型
+          // 如果是对象类型，保留原样，不转换为字符串
+          console.log('保留对象类型的ID:', id);
         }
         
         return {
@@ -729,10 +738,73 @@ function AiChat() {
     
     try {
       setIsLoading(true);
-      setCurrentConversationId(conversationId);
-      setSessionId(conversationId);
+      
+      // 处理对话ID，提取实际的ID值
+      let processedId;
+      let actualId;
+      let apiUrl;
+      
+      if (typeof conversationId === 'object' && conversationId !== null) {
+        console.log('对话ID是对象类型:', conversationId);
+        
+        // 保存对象形式的ID供前端使用
+        processedId = conversationId;
+        
+        // 对于对象类型的ID，使用新的查询参数路由
+        if (conversationId.table_name && conversationId.id) {
+          // 如果是SurrealDB格式的ID对象 {table_name: "chat", id: "xxx"}
+          // 使用查询参数路由
+          const queryParams = new URLSearchParams({
+            table_name: conversationId.table_name,
+            id: conversationId.id
+          });
+          apiUrl = `${API_BASE_URL}/chats/query/messages?${queryParams.toString()}`;
+          console.log('使用查询参数路由获取消息:', apiUrl);
+          
+          // 保存实际ID供前端使用
+          actualId = conversationId.id;
+        } else if (conversationId.id) {
+          // 如果对象有id字段，使用该字段作为实际ID
+          actualId = conversationId.id;
+          apiUrl = `${API_BASE_URL}/chats/${actualId}/messages`;
+          console.log('从对象中提取的实际ID:', actualId);
+        } else {
+          // 如果无法提取ID，尝试使用查询参数路由
+          try {
+            // 将整个对象作为查询参数
+            const queryParams = new URLSearchParams();
+            Object.entries(conversationId).forEach(([key, value]) => {
+              queryParams.append(key, typeof value === 'object' ? JSON.stringify(value) : value);
+            });
+            apiUrl = `${API_BASE_URL}/chats/query/messages?${queryParams.toString()}`;
+            console.log('将整个对象作为查询参数:', apiUrl);
+            
+            // 生成一个唯一ID供前端使用
+            actualId = `obj-${Date.now()}`;
+          } catch (e) {
+            // 如果转换失败，生成一个唯一ID并使用标准路由
+            actualId = `generated-${Date.now()}`;
+            apiUrl = `${API_BASE_URL}/chats/${actualId}/messages`;
+            console.log('无法处理对象ID，生成临时ID:', actualId);
+          }
+        }
+      } else if (conversationId === undefined || conversationId === null) {
+        console.warn('无效的对话ID');
+        return;
+      } else {
+        // 字符串类型的ID
+        processedId = String(conversationId);
+        actualId = processedId;
+        apiUrl = `${API_BASE_URL}/chats/${actualId}/messages`;
+      }
+      
+      // 将处理后的ID保存到状态中
+      setCurrentConversationId(processedId);
+      setSessionId(processedId);
       const token = localStorage.getItem('token');
-      const response = await fetch(`${API_BASE_URL}/chats/${conversationId}/messages`, {
+      console.log('请求对话消息的URL:', apiUrl);
+      
+      const response = await fetch(apiUrl, {
         method: 'GET',
         headers: {
           'Authorization': `Bearer ${token}`,
@@ -974,9 +1046,50 @@ function AiChat() {
       }
       
       // 确定API端点
-      const endpoint = conversationId 
-        ? `${API_BASE_URL}/chats/${conversationId}/messages` 
-        : `${API_BASE_URL}/chats`;
+      let endpoint;
+      
+      if (conversationId) {
+        // 处理对象类型的对话ID
+        if (typeof conversationId === 'object' && conversationId !== null) {
+          console.log('保存对话时发现对象类型的ID:', conversationId);
+          
+          // 对于SurrealDB格式的ID对象 {table_name: "chat", id: "xxx"}
+          if (conversationId.table_name && conversationId.id) {
+            // 使用查询参数路由
+            const queryParams = new URLSearchParams({
+              table_name: conversationId.table_name,
+              id: conversationId.id
+            });
+            endpoint = `${API_BASE_URL}/chats/query/messages?${queryParams.toString()}`;
+            console.log('使用查询参数路由保存消息:', endpoint);
+          } else if (conversationId.id) {
+            // 如果对象有id字段，使用该字段作为实际ID
+            endpoint = `${API_BASE_URL}/chats/${conversationId.id}/messages`;
+            console.log('使用对象中id字段保存消息:', endpoint);
+          } else {
+            // 如果无法提取ID，尝试使用查询参数路由
+            try {
+              // 将整个对象作为查询参数
+              const queryParams = new URLSearchParams();
+              Object.entries(conversationId).forEach(([key, value]) => {
+                queryParams.append(key, typeof value === 'object' ? JSON.stringify(value) : value);
+              });
+              endpoint = `${API_BASE_URL}/chats/query/messages?${queryParams.toString()}`;
+              console.log('将整个对象作为查询参数保存消息:', endpoint);
+            } catch (e) {
+              // 如果转换失败，使用标准路由
+              console.warn('无法将对象转换为查询参数，使用序列化方式:', e);
+              const encodedId = encodeURIComponent(JSON.stringify(conversationId));
+              endpoint = `${API_BASE_URL}/chats/${encodedId}/messages`;
+            }
+          }
+        } else {
+          // 字符串类型的ID
+          endpoint = `${API_BASE_URL}/chats/${conversationId}/messages`;
+        }
+      } else {
+        endpoint = `${API_BASE_URL}/chats`;
+      }
       
       console.log('保存对话到:', endpoint);
       console.log('保存的消息数量:', messagesToSave.length);
@@ -1206,16 +1319,19 @@ function AiChat() {
     // 如果是新对话（没有currentConversationId），立即更新侧边栏
     if (!currentConversationId && isLoggedIn) {
       // 创建一个临时对话项，显示在侧边栏中
-      // 确保 sessionId 是字符串类型
+      // 保留原始sessionId类型，包括对象类型
       let conversationId = sessionId;
-      if (typeof conversationId === 'object') {
-        console.warn('发现对象类型的sessionId:', conversationId);
-        conversationId = JSON.stringify(conversationId); // 将对象转换为字符串
-      } else if (conversationId === undefined || conversationId === null) {
+      console.log('新对话的sessionId:', conversationId, '类型:', typeof conversationId);
+      
+      if (conversationId === undefined || conversationId === null) {
         console.warn('发现无效的sessionId，生成随机id');
         conversationId = generateUUID(); // 生成一个新的UUID作为id
+      } else if (typeof conversationId !== 'object') {
+        // 如果不是对象，确保是字符串类型
+        conversationId = String(conversationId);
       } else {
-        conversationId = String(conversationId); // 确保id是字符串类型
+        // 如果是对象类型，保留原样
+        console.log('保留对象类型的sessionId:', conversationId);
       }
       
       const tempConversation = {
@@ -1254,11 +1370,28 @@ function AiChat() {
           return msgIndex >= nonSystemMessages.length - 4;
         })
         .concat(userMessages)
-        .map(msg => ({
-          role: msg.role,
-          content: msg.content,
-          type: msg.type
-        }));
+        .map(msg => {
+          // 在前端存储时保留完整的消息字段
+          const processedMsg = {
+            role: msg.role || SenderRole.USER, // 默认为用户角色
+            content: msg.content || "",      // 确保content不为null或undefined
+            type: msg.type || MessageType.TEXT, // 默认为文本类型
+            timestamp: msg.timestamp || new Date().toISOString(), // 确保有时间戳
+            id: msg.id || generateUUID(), // 确保有ID
+            visible: msg.visible !== undefined ? msg.visible : true // 确保有可见性标志
+          };
+          
+          // 如果是文件类型消息，确保包含文件相关字段
+          if (msg.type === MessageType.IMAGE || msg.type === MessageType.DOCUMENT || 
+              msg.type === MessageType.AUDIO || msg.type === MessageType.VIDEO) {
+            processedMsg.file_url = msg.file_url || msg.preview || "";
+            processedMsg.file_name = msg.file_name || msg.name || "";
+          }
+          
+          // 记录处理后的消息
+          console.log('前端存储的完整消息:', processedMsg);
+          return processedMsg;
+        });
       
       console.log('发送给后端的消息数量:', visibleMessages.length);
       
@@ -1342,16 +1475,76 @@ function AiChat() {
             'Authorization': token ? `Bearer ${token}` : ''
           });
           
+          // 确保每条消息都符合后端要求的格式
+          // 后端只需要 role、content 和 type 三个字段
+          // 只选择最近的10条消息，减少请求体积
+          const recentMessages = visibleMessages.slice(-10);
+          console.log('选择最近的10条消息:', recentMessages.length);
+          
+          const processedMessages = recentMessages.map(msg => {
+            // 只保留后端需要的字段，并确保字段类型正确
+            const role = (msg.role || SenderRole.USER).toString();
+            // 确保用户消息始终有内容
+            let content = (msg.content || "").toString();
+            if (role === 'user' && (!content || content.trim() === "")) {
+              content = "您好，我需要帮助"; // 用户消息必须有内容
+            }
+            
+            return {
+              role: role,
+              content: content,
+              type: (msg.type || MessageType.TEXT).toString() // 确保是字符串
+            };
+          });
+          
+          // 记录简化后的消息
+          console.log('简化后发送给后端的消息:', processedMessages);
+          
+          // 确保有至少一条用户消息，并且是最后一条
+          if (!processedMessages.some(msg => msg.role === 'user') || 
+              processedMessages[processedMessages.length - 1].role !== 'user') {
+            console.warn('警告: 消息列表中没有用户消息或最后一条不是用户消息，添加当前输入');
+            // 添加当前用户输入作为最后一条消息
+            const userContent = textInput.trim() || '您好，我需要帮助';
+            processedMessages.push({
+              role: 'user',
+              content: userContent,
+              type: 'text'
+            });
+          }
+          
+          // 确保消息列表不为空
+          if (processedMessages.length === 0) {
+            console.warn('警告: 消息列表为空，添加默认用户消息');
+            processedMessages.push({
+              role: 'user',
+              content: textInput.trim() || '您好',
+              type: 'text'
+            });
+          }
+          
+          // 简化请求体，只保留后端需要的字段
           const requestBody = {
-            session_id: sessionId,
-            turn_id: newTurnId,
-            messages: visibleMessages,
-            user_id: userId,
-            ai_id: 'ai_rainbow_city'
+            session_id: sessionId || 'default-session',
+            turn_id: newTurnId || `turn-${Date.now()}`,
+            messages: processedMessages
           };
+          
+          // 测试请求体大小
+          const requestBodySize = JSON.stringify(requestBody).length;
+          console.log('请求体大小:', requestBodySize, '字节');
+          
+          // 如果请求体过大，可能会导致问题
+          if (requestBodySize > 100000) {
+            console.warn('警告: 请求体过大，可能会导致问题');
+          }
           console.log('请求体:', JSON.stringify(requestBody));
           console.log('请求体大小:', JSON.stringify(requestBody).length, '字节');
-          console.log('消息数量:', visibleMessages.length);
+          console.log('消息数量:', processedMessages.length);
+          
+          // 再次检查是否有用户消息
+          const finalHasUserMessage = requestBody.messages.some(msg => msg.role === 'user');
+          console.log('最终请求中是否包含用户消息:', finalHasUserMessage);
           
           // 准备请求头
           const headers = {

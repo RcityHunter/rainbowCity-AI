@@ -552,7 +552,7 @@ def update(table, id, data):
     
     Args:
         table (str): 表名
-        id (str): 记录ID
+        id (str): 记录ID，可能包含表名前缀
         data (dict): 要更新的数据
         
     Returns:
@@ -565,9 +565,135 @@ def update(table, id, data):
             return data
         
         try:
+            # 处理ID格式，创建一个局部变量以避免作用域问题
+            record_id = id
+            
+            # 处理RecordID类型
+            from surrealdb.data.types.record_id import RecordID
+            if isinstance(record_id, RecordID):
+                print(f"检测到RecordID类型: {record_id}")
+                # 使用RecordID的table_name和record_id属性
+                if hasattr(record_id, 'table_name') and hasattr(record_id, 'record_id'):
+                    if record_id.table_name == table:
+                        # 如果表名匹配，直接使用record_id
+                        print(f"使用RecordID的record_id属性: {record_id.record_id}")
+                        record_id = record_id.record_id
+                    else:
+                        # 如果表名不匹配，转换为字符串并提取ID部分
+                        record_id_str = str(record_id)
+                        print(f"将RecordID转换为字符串: {record_id_str}")
+                        if ':' in record_id_str:
+                            table_prefix, pure_id = record_id_str.split(':', 1)
+                            record_id = pure_id
+                else:
+                    # 如果RecordID没有预期的属性，尝试将其转换为字符串
+                    try:
+                        record_id_str = str(record_id)
+                        print(f"将RecordID转换为字符串: {record_id_str}")
+                        if ':' in record_id_str:
+                            if record_id_str.startswith(f"{table}:"):
+                                _, pure_id = record_id_str.split(':', 1)
+                                record_id = pure_id
+                            else:
+                                # 处理特殊情况：当ID是类似 {'id': RecordID(table_name=memory, record_id=xxx)} 的字典
+                                if isinstance(id, dict) and 'id' in id and isinstance(id['id'], RecordID):
+                                    record_id = id['id'].record_id
+                                    print(f"从字典中提取RecordID: {record_id}")
+                    except Exception as e:
+                        print(f"处理RecordID时出错: {e}")
+            # 处理字典类型的ID，特别是内存记录
+            elif isinstance(record_id, dict) and 'id' in record_id:
+                print(f"检测到字典类型ID: {record_id}")
+                if isinstance(record_id['id'], RecordID):
+                    # 如果字典中的id是RecordID类型
+                    inner_id = record_id['id']
+                    if hasattr(inner_id, 'record_id'):
+                        record_id = inner_id.record_id
+                        print(f"从字典中提取RecordID: {record_id}")
+                    else:
+                        record_id = str(inner_id).split(':', 1)[1] if ':' in str(inner_id) else str(inner_id)
+                        print(f"从字典中提取并处理ID: {record_id}")
+                else:
+                    # 如果字典中的id是字符串或其他类型
+                    record_id = str(record_id['id'])
+                    if ':' in record_id and record_id.startswith(f"{table}:"):
+                        record_id = record_id.split(':', 1)[1]
+                    print(f"从字典中提取ID: {record_id}")
+            # 处理字符串类型的ID
+            elif isinstance(record_id, str) and ':' in record_id:
+                # 如果ID已经包含表名前缀，则提取纯准ID
+                prefix, pure_id = record_id.split(':', 1)
+                if prefix == table:
+                    # 如果前缀就是表名，直接使用纯准ID
+                    print(f"ID已包含表名前缀，提取纯准ID: {pure_id}")
+                    record_id = pure_id
+            
             # 使用SurrealDB的update方法更新记录
-            result = db.update(f"{table}:{id}", data)
-            return result
+            full_record_id = f"{table}:{record_id}"
+            print(f"更新记录: {full_record_id}")
+            
+            # 为了避免日志过大，不打印完整的数据（特别是嵌入向量）
+            if 'embedding' in data and isinstance(data['embedding'], list) and len(data['embedding']) > 10:
+                log_data = data.copy()
+                log_data['embedding'] = f"[{data['embedding'][0]}, {data['embedding'][1]}, ... (共{len(data['embedding'])}个元素)]"
+                print(f"数据(简化): {log_data}")
+            else:
+                print(f"数据: {data}")
+                
+            try:
+                result = db.update(full_record_id, data)
+                return result
+            except ValueError as ve:
+                # 处理"too many values to unpack"错误
+                if "too many values to unpack" in str(ve):
+                    print(f"处理值解包错误: {ve}")
+                    # 尝试使用另一种方式更新
+                    try:
+                        # 对于嵌入向量，我们需要特殊处理
+                        if 'embedding' in data and isinstance(data['embedding'], list):
+                            # 创建不包含嵌入向量的数据副本
+                            data_without_embedding = {k: v for k, v in data.items() if k != 'embedding'}
+                            # 先更新其他字段
+                            if data_without_embedding:
+                                result = db.update(full_record_id, data_without_embedding)
+                                print(f"成功更新非嵌入字段: {list(data_without_embedding.keys())}")
+                            
+                            # 然后单独处理嵌入向量 - 使用原始查询
+                            try:
+                                # 使用参数化查询避免SQL注入和格式问题
+                                update_embedding_query = f"UPDATE {full_record_id} SET embedding = $embedding"
+                                params = {"embedding": data['embedding']}
+                                print(f"尝试使用参数化查询更新嵌入向量")
+                                result = db.query(update_embedding_query, params)
+                                print(f"嵌入向量更新成功")
+                                return data  # 返回原始数据作为结果
+                            except Exception as embed_error:
+                                print(f"嵌入向量更新失败: {embed_error}")
+                                # 如果嵌入向量更新失败，至少返回已更新的其他字段
+                                return data_without_embedding
+                        else:
+                            # 对于非嵌入向量数据，使用常规SQL更新
+                            update_query = f"UPDATE {full_record_id} SET "
+                            updates = []
+                            for key, value in data.items():
+                                if key != 'id':  # 跳过ID字段
+                                    if isinstance(value, str):
+                                        # 转义字符串中的单引号
+                                        escaped_value = value.replace("'", "\\'") 
+                                        updates.append(f"{key} = '{escaped_value}'")
+                                    elif value is None:
+                                        updates.append(f"{key} = NULL")
+                                    else:
+                                        updates.append(f"{key} = {value}")
+                            
+                            if updates:
+                                update_query += ", ".join(updates)
+                                print(f"尝试使用SQL更新: {update_query}")
+                                result = db.query(update_query)
+                                return data  # 返回原始数据作为结果
+                    except Exception as sql_error:
+                        print(f"SQL更新失败: {sql_error}")
+                raise  # 重新抛出原始错误
         except Exception as e:
             print(f"Error updating data in {table}: {e}")
             return None

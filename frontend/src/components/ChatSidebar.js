@@ -82,7 +82,7 @@ function ChatSidebar({ conversations, onSelectConversation, onCreateNewChat }) {
               {filteredConversations.length > 0 ? (
                 filteredConversations.map((conv, index) => (
                   <div 
-                    key={conv.id || `conv-${index}`} 
+                    key={typeof conv.id === 'object' ? `conv-obj-${index}` : (conv.id || `conv-${index}`)} 
                     className="conversation-item"
                     onClick={() => onSelectConversation(conv.id)}
                   >

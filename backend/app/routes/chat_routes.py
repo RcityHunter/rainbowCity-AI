@@ -50,13 +50,13 @@ AVAILABLE_TOOLS = [
         "parameters": {
             "type": "object",
             "properties": {
-                "ai_type": {
-                    "type": "string",
-                    "description": "AI类型代码"
+                "base_frequency": {
+                    "type": "number",
+                    "description": "基础频率值"
                 },
-                "personality": {
-                    "type": "string",
-                    "description": "人格代码"
+                "multiplier": {
+                    "type": "number",
+                    "description": "频率倍数"
                 }
             }
         }
@@ -759,6 +759,54 @@ async def chat_agent(request: ChatRequest):
     import asyncio
     from asyncio import TimeoutError
     import logging
+    import json
+    import traceback
+    from fastapi.responses import JSONResponse
+    
+    # 记录请求体详情，便于调试
+    try:
+        # 设置日志级别为INFO，确保日志能被打印
+        logging.getLogger().setLevel(logging.INFO)
+        
+        # 记录请求信息
+        logging.info("====== 新的chat-agent请求 ======")
+        logging.info(f"session_id: {request.session_id}")
+        logging.info(f"turn_id: {request.turn_id}")
+        logging.info(f"消息数量: {len(request.messages) if request.messages else 0}")
+        
+        # 检查消息列表
+        if not request.messages or len(request.messages) == 0:
+            logging.error("错误: 消息列表为空")
+            return JSONResponse(
+                status_code=400,
+                content={"error": "消息列表不能为空"}
+            )
+        
+        # 检查每条消息的格式
+        for i, msg in enumerate(request.messages):
+            content_preview = msg.content[:50] + '...' if msg.content and len(msg.content) > 50 else msg.content
+            logging.info(f"消息 {i+1}: role={msg.role}, type={msg.type}, content={content_preview}")
+            
+            # 检查必需字段
+            if not msg.role:
+                logging.error(f"错误: 消息 {i+1} 缺少role字段")
+                return JSONResponse(
+                    status_code=400,
+                    content={"error": f"消息 {i+1} 缺少role字段"}
+                )
+            if not msg.content and msg.content != "":
+                logging.error(f"错误: 消息 {i+1} 缺少content字段")
+                return JSONResponse(
+                    status_code=400,
+                    content={"error": f"消息 {i+1} 缺少content字段"}
+                )
+    except Exception as e:
+        logging.error(f"请求验证错误: {str(e)}")
+        logging.error(traceback.format_exc())
+        return JSONResponse(
+            status_code=400,
+            content={"error": f"请求验证错误: {str(e)}"}
+        )
     
     # 定义一个内部处理函数，用于超时控制
     async def process_chat_request():
