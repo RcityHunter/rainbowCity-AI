@@ -294,11 +294,6 @@ function AiChat() {
       typingState[id].displayedContent !== typingState[id].fullContent
     );
     
-    if (typingMessageIds.length > 0) {
-      console.log(`当前有 ${typingMessageIds.length} 条消息正在打字:`, 
-        typingMessageIds.map(id => id.substring(0, 6)));
-    }
-    
     // 为每个正在打字的消息创建定时器
     const timers = typingMessageIds.map(id => {
       return setTimeout(() => {
@@ -308,7 +303,6 @@ function AiChat() {
           
           // 如果已经打字完成，则停止打字
           if (messageState.displayedContent === messageState.fullContent) {
-            console.log(`消息 ${id.substring(0, 6)} 打字完成`);
             return {
               ...prev,
               [id]: {
@@ -321,8 +315,6 @@ function AiChat() {
           // 添加下一个字符
           const nextChar = messageState.fullContent.charAt(messageState.displayedContent.length);
           const newDisplayedContent = messageState.displayedContent + nextChar;
-          
-          console.log(`消息 ${id.substring(0, 6)} 添加字符: '${nextChar}', 进度: ${newDisplayedContent.length}/${messageState.fullContent.length}`);
           
           // 每10个字符滚动一次到底部
           if (newDisplayedContent.length % 10 === 0 || newDisplayedContent.length === messageState.fullContent.length) {
@@ -338,7 +330,7 @@ function AiChat() {
             }
           };
         });
-      }, 30); // 每30毫秒添加一个字符
+      }, 50); // 增加间隔时间到 50 毫秒，但每次添加多个字符
     });
     
     // 清除定时器
@@ -601,7 +593,9 @@ function AiChat() {
   const handleCreateNewChat = () => {
     // 创建新的会话ID
     const newSessionId = generateUUID();
-    setSessionId(newSessionId);
+    // 确保是字符串类型
+    const sessionIdString = String(newSessionId);
+    setSessionId(sessionIdString);
     setCurrentConversationId(null);
     
     // 创建时间戳，确保助手消息时间早于系统消息
@@ -635,7 +629,7 @@ function AiChat() {
     
     // 创建新的对话记录
     const newConversation = {
-      id: newSessionId,
+      id: sessionIdString, // 使用字符串类型的ID
       title: '新对话 ' + new Date().toLocaleString('zh-CN'),
       preview: '你好！我是彩虹城AI，有什么我可以帮你的吗？',
       lastUpdated: new Date().toISOString(),
@@ -694,14 +688,28 @@ function AiChat() {
     console.log('获取到的用户对话列表:', data);
     
     if (data && Array.isArray(data.conversations)) {
-      // 处理对话列表数据
-      const processedConversations = data.conversations.map(conversation => ({
-        id: conversation.id,
-        title: conversation.title,
-        preview: conversation.preview,
-        lastUpdated: conversation.lastUpdated,
-        messages: conversation.messages
-      }));
+      // 处理对话列表数据，确保id是字符串类型
+      const processedConversations = data.conversations.map(conversation => {
+        // 确保id是字符串类型
+        let id = conversation.id;
+        if (typeof id === 'object') {
+          console.warn('发现对象类型的id:', id);
+          id = JSON.stringify(id); // 将对象转换为字符串
+        } else if (id === undefined || id === null) {
+          console.warn('发现无效的id，生成随机id');
+          id = generateUUID(); // 生成一个新的UUID作为id
+        } else {
+          id = String(id); // 确保id是字符串类型
+        }
+        
+        return {
+          id: id,
+          title: conversation.title || '无标题对话',
+          preview: conversation.preview || '',
+          lastUpdated: conversation.lastUpdated || new Date().toISOString(),
+          messages: conversation.messages || []
+        };
+      });
       
       setConversations(processedConversations);
     } else {
@@ -1198,8 +1206,20 @@ function AiChat() {
     // 如果是新对话（没有currentConversationId），立即更新侧边栏
     if (!currentConversationId && isLoggedIn) {
       // 创建一个临时对话项，显示在侧边栏中
+      // 确保 sessionId 是字符串类型
+      let conversationId = sessionId;
+      if (typeof conversationId === 'object') {
+        console.warn('发现对象类型的sessionId:', conversationId);
+        conversationId = JSON.stringify(conversationId); // 将对象转换为字符串
+      } else if (conversationId === undefined || conversationId === null) {
+        console.warn('发现无效的sessionId，生成随机id');
+        conversationId = generateUUID(); // 生成一个新的UUID作为id
+      } else {
+        conversationId = String(conversationId); // 确保id是字符串类型
+      }
+      
       const tempConversation = {
-        id: sessionId, // 使用当前会话ID
+        id: conversationId, // 使用处理后的会话ID
         title: generateConversationTitle(sortMessagesByTimestamp([...messages, ...userMessages])),
         preview: typeof messageContent === 'string' ? messageContent.substring(0, 30) + (messageContent.length > 30 ? '...' : '') : JSON.stringify(messageContent).substring(0, 30) + '...',
         lastUpdated: new Date().toISOString(),
@@ -1747,8 +1767,8 @@ const renderMessageContent = (message) => {
     const messageTypingState = typingState[message.id];
     const isTypingMessage = messageTypingState && messageTypingState.isTyping;
     
-    // 调试：打印消息渲染状态
-    if (message.role === SenderRole.ASSISTANT) {
+    // 只在开发模式下打印日志
+    if (process.env.NODE_ENV === 'development' && message.role === SenderRole.ASSISTANT && false) {
       console.log('渲染AI消息:', {
         id: message.id.substring(0, 6),
         hasTypingState: !!messageTypingState,
@@ -2022,12 +2042,13 @@ const renderMessageContent = (message) => {
             });
             
             // 调试日志，显示所有消息的时间戳
-            console.log('消息排序后的时间戳:', allSortedMessages.map(m => ({
-              id: m.id,
-              role: m.role,
-              timestamp: m.timestamp,
-              parsed: m.timestamp ? new Date(m.timestamp).toISOString() : 'invalid'
-            })));
+            console.log('消息排序后的时间戳:', allSortedMessages && allSortedMessages.length > 0 ? 
+              allSortedMessages.map(m => ({
+                id: m.id,
+                role: m.role,
+                timestamp: m.timestamp,
+                parsed: m.timestamp ? new Date(m.timestamp).toISOString() : 'invalid'
+              })) : '无消息');
             
             // 创建一个映射来跟踪已使用的消息
             const usedMessages = new Set();
@@ -2120,10 +2141,11 @@ const renderMessageContent = (message) => {
             });
             
             // 调试日志，显示问答对排序结果
-            console.log('问答对排序后:', qaGroups.map(g => ({
-              user: g.user ? { id: g.user.id, timestamp: g.user.timestamp } : null,
-              assistant: g.assistant ? { id: g.assistant.id, timestamp: g.assistant.timestamp } : null
-            })));
+            console.log('问答对排序后:', qaGroups && qaGroups.length > 0 ? 
+              qaGroups.map(g => ({
+                user: g.user ? { id: g.user.id, timestamp: g.user.timestamp } : null,
+                assistant: g.assistant ? { id: g.assistant.id, timestamp: g.assistant.timestamp } : null
+              })) : '无问答对');
             
             // 处理重复的问答对
             const uniqueGroups = [];
