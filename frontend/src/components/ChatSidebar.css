@@ -1,60 +1,24 @@
-/* 聊天侧边栏样式 */
+/* 聊天侧边栏样式 - 直接显示，宽度减小 */
 .chat-sidebar {
   position: fixed;
-  left: -10px;
+  left: 0;
   top: 0;
   height: 100vh;
-  width: 15px;
+  width: 250px;
   z-index: 1000;
   display: flex;
-  transition: all 0.25s ease-in-out;
   overflow: hidden;
-}
-
-/* 展开状态 */
-.chat-sidebar.expanded {
-  left: 0;
-  width: 320px;
   box-shadow: 0 0 20px rgba(0, 0, 0, 0.3);
 }
 
-/* 触发区域 */
-.sidebar-trigger {
-  width: 15px;
-  height: 100%;
-  background-color: rgba(26, 26, 46, 0.3);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  cursor: pointer;
-  border-right: 1px solid rgba(42, 42, 61, 0.2);
-  opacity: 0.5;
-  transition: all 0.25s ease;
+/* 展开状态 - 现在始终展开 */
+.chat-sidebar.expanded {
+  /* 保持与上面相同的样式，不再需要过渡效果 */
+  left: 0;
+  width: 250px;
 }
 
-.chat-sidebar:hover .sidebar-trigger {
-  opacity: 1;
-  background-color: rgba(26, 26, 46, 0.5);
-}
-
-.trigger-icon {
-  width: 12px;
-  height: 12px;
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='%23a18cd1' viewBox='0 0 24 24'%3E%3Cpath d='M3 18h18v-2H3v2zm0-5h18v-2H3v2zm0-7v2h18V6H3z'/%3E%3C/svg%3E");
-  background-size: contain;
-  background-repeat: no-repeat;
-  transition: transform 0.25s ease;
-  margin-left: 3px;
-  opacity: 0.8;
-}
-
-.chat-sidebar:hover .trigger-icon {
-  opacity: 1;
-}
-
-.chat-sidebar.expanded .trigger-icon {
-  transform: rotate(180deg);
-}
+/* 移除触发区域相关样式 */
 
 /* 侧边栏内容区域 - 毛玻璃效果 */
 .sidebar-content {
@@ -298,7 +262,7 @@
 /* 移动端适配 */
 @media (max-width: 768px) {
   .chat-sidebar.expanded {
-    width: 280px;
+    width: 220px;
   }
   
   .sidebar-trigger {

@@ -54,17 +54,17 @@ html, body {
 
 /* 主容器样式 */
 .ai-chat-container {
-  width: 100%;
+  width: calc(100% - 250px); /* 考虑新的侧边栏宽度 */
   height: 100vh;
   display: flex;
   flex-direction: column;
   padding: 0;
   margin: 0;
+  margin-left: 250px; /* 为侧边栏留出空间 */
   background-color: var(--bg-dark);
   color: var(--text-primary);
   position: fixed;
   top: 0;
-  left: 0;
   right: 0;
   bottom: 0;
   overflow: hidden;
@@ -86,8 +86,8 @@ html, body {
   margin: 0;
   padding: 0;
   border: none;
-  /* 确保主容器完全填满视口高度，减去输入框高度 */
-  min-height: calc(100vh - 70px);
+  /* 确保主容器完全填满视口高度，但留出输入框空间 */
+  min-height: calc(100vh - 120px);
   z-index: 1; /* 确保在正确的层级 */
 }
 
@@ -100,7 +100,7 @@ html, body {
   overflow-y: auto;
   overflow-x: visible; /* 允许水平溢出，防止消息被截断 */
   padding: 0; /* 移除内边距，避免空隙 */
-  padding-bottom: 90px; /* 增加底部内边距，确保最后一条消息不会被输入框遮挡 */
+  padding-bottom: 20px; /* 减少底部内边距，因为输入框现在在窗口内 */
   display: flex;
   flex-direction: column;
   gap: 0; /* 移除消息之间的间距 */
@@ -109,7 +109,7 @@ html, body {
   scrollbar-color: rgba(161, 140, 209, 0.5) transparent;
   position: relative;
   /* 确保聊天消息区域完全延伸到输入框 */
-  min-height: calc(100vh - 70px);
+  min-height: calc(100vh - 120px); /* 调整高度以留出输入框空间 */
   z-index: 1; /* 确保消息容器在正确的层级 */
 }
 
@@ -407,10 +407,9 @@ html, body {
 }
 
 .input-form {
-  position: fixed;
+  position: relative; /* 改为相对定位，使其在窗口内 */
   bottom: 0;
-  left: 0;
-  right: 0;
+  width: 100%;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -917,6 +916,15 @@ html, body {
 }
 
 @media (max-width: 768px) {
+  .ai-chat-container {
+    width: 100%;
+    margin-left: 0;
+  }
+  
+  .input-form {
+    width: 100%;
+  }
+  
   .message {
     max-width: 90%;
   }
