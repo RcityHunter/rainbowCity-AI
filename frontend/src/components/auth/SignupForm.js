@@ -79,17 +79,8 @@ const SignupForm = ({ onSignupSuccess, onSwitchToLogin }) => {
       });
 
       setLoading(false);
-      // 注册成功后直接使用返回的用户数据和token登录
-      if (data && data.access_token && data.user) {
-        // 已经在auth_service.js中存储了token和用户信息
-        if (onSignupSuccess) {
-          onSignupSuccess(data.user); // 直接传递用户数据，与登录成功时的行为一致
-        }
-      } else {
-        // 如果没有返回预期的数据格式，使用原来的逻辑
-        if (onSignupSuccess) {
-          onSignupSuccess(data);
-        }
+      if (onSignupSuccess) {
+        onSignupSuccess(data);
       }
     } catch (err) {
       setLoading(false);

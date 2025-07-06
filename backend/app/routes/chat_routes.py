@@ -30,7 +30,11 @@ load_dotenv()
 # 获取OpenAI API密钥
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
-# OpenAI客户端将在每个函数中初始化，以避免全局变量问题
+# 初始OpenAI客户端
+# 在新版本的 OpenAI SDK 中，如果需要设置代理，应该使用 http_client 参数
+# 显式创建 httpx 客户端，不使用任何代理设置
+http_client = httpx.Client()
+client = OpenAI(api_key=OPENAI_API_KEY, http_client=http_client)
 
 # 创建AI-Agent实例
 ai_assistant = AIAssistant(model_name="gpt-3.5-turbo")
@@ -50,13 +54,13 @@ AVAILABLE_TOOLS = [
         "parameters": {
             "type": "object",
             "properties": {
-                "base_frequency": {
-                    "type": "number",
-                    "description": "基础频率值"
+                "ai_type": {
+                    "type": "string",
+                    "description": "AI类型代码"
                 },
-                "multiplier": {
-                    "type": "number",
-                    "description": "频率倍数"
+                "personality": {
+                    "type": "string",
+                    "description": "人格代码"
                 }
             }
         }
@@ -149,9 +153,6 @@ class ChatResponse(BaseModel):
 async def chat(request: ChatRequest):
     logging.info("===== CHAT FUNCTION EXECUTED =====")
     try:
-        # 初始化OpenAI客户端
-        http_client = httpx.Client()
-        client = OpenAI(api_key=OPENAI_API_KEY, http_client=http_client)
         messages = request.messages
         session_id = request.session_id
         turn_id = request.turn_id
@@ -382,11 +383,8 @@ async def chat(request: ChatRequest):
                     logging.error(f"处理天气查询时出错: {str(e)}")
                     # 失败时继续正常处理
 
-        # 初始化ai_message变量
-        ai_message = None
-        
         # 检查是否有工具调用
-        if ai_message and hasattr(ai_message, 'tool_calls') and ai_message.tool_calls:
+        if ai_message.tool_calls:
             # 有工具调用，处理工具调用
             tool_calls = []
             for tool_call in ai_message.tool_calls:
@@ -397,7 +395,7 @@ async def chat(request: ChatRequest):
                 })
         
         # 处理工具调用响应
-        if ai_message and hasattr(ai_message, "tool_calls") and ai_message.tool_calls:
+        if hasattr(ai_message, "tool_calls") and ai_message.tool_calls:
             tool_calls_data = ai_message.tool_calls
             tool_responses = []
             
@@ -585,7 +583,7 @@ async def chat(request: ChatRequest):
                 ai_message = response.choices[0].message
             
             # 检查是否有工具调用
-            if ai_message and hasattr(ai_message, 'tool_calls') and ai_message.tool_calls:
+            if ai_message.tool_calls:
                 # 有工具调用，处理工具调用
                 tool_calls = []
                 for tool_call in ai_message.tool_calls:
@@ -596,7 +594,7 @@ async def chat(request: ChatRequest):
                     })
                 
                 # 处理工具调用响应
-                if ai_message and hasattr(ai_message, 'tool_calls') and ai_message.tool_calls:
+                if "tool_calls" in ai_message:
                     tool_calls_data = ai_message.tool_calls
                     tool_responses = []
                     
@@ -671,10 +669,10 @@ async def chat(request: ChatRequest):
                 return {
                     "success": True,
                     "response": {
-                        "content": ai_message.content if ai_message and hasattr(ai_message, 'content') else "",
+                        "content": ai_message.content,
                         "type": "text",
                         "metadata": {
-                            "model": response.model if 'response' in locals() else "gpt-3.5-turbo",
+                            "model": response.model,
                             "created": int(time.time()),
                             "session_id": session_id,
                             "turn_id": turn_id
@@ -687,10 +685,10 @@ async def chat(request: ChatRequest):
                 return {
                     "success": True,
                     "response": {
-                        "content": ai_message.content if ai_message and hasattr(ai_message, 'content') else "",
+                        "content": ai_message.content,
                         "type": "text",
                         "metadata": {
-                            "model": response.model if 'response' in locals() else "gpt-3.5-turbo",
+                            "model": response.model,
                             "created": int(time.time()),
                             "session_id": session_id,
                             "turn_id": turn_id
@@ -711,10 +709,10 @@ async def chat(request: ChatRequest):
             return {
                 "success": True,
                 "response": {
-                    "content": ai_message.content if ai_message and hasattr(ai_message, 'content') else "",
+                    "content": ai_message.content,
                     "type": "text",
                     "metadata": {
-                        "model": response.model if 'response' in locals() else "gpt-3.5-turbo",
+                        "model": response.model,
                         "created": int(time.time()),
                         "session_id": session_id,
                         "turn_id": turn_id
@@ -759,54 +757,6 @@ async def chat_agent(request: ChatRequest):
     import asyncio
     from asyncio import TimeoutError
     import logging
-    import json
-    import traceback
-    from fastapi.responses import JSONResponse
-    
-    # 记录请求体详情，便于调试
-    try:
-        # 设置日志级别为INFO，确保日志能被打印
-        logging.getLogger().setLevel(logging.INFO)
-        
-        # 记录请求信息
-        logging.info("====== 新的chat-agent请求 ======")
-        logging.info(f"session_id: {request.session_id}")
-        logging.info(f"turn_id: {request.turn_id}")
-        logging.info(f"消息数量: {len(request.messages) if request.messages else 0}")
-        
-        # 检查消息列表
-        if not request.messages or len(request.messages) == 0:
-            logging.error("错误: 消息列表为空")
-            return JSONResponse(
-                status_code=400,
-                content={"error": "消息列表不能为空"}
-            )
-        
-        # 检查每条消息的格式
-        for i, msg in enumerate(request.messages):
-            content_preview = msg.content[:50] + '...' if msg.content and len(msg.content) > 50 else msg.content
-            logging.info(f"消息 {i+1}: role={msg.role}, type={msg.type}, content={content_preview}")
-            
-            # 检查必需字段
-            if not msg.role:
-                logging.error(f"错误: 消息 {i+1} 缺少role字段")
-                return JSONResponse(
-                    status_code=400,
-                    content={"error": f"消息 {i+1} 缺少role字段"}
-                )
-            if not msg.content and msg.content != "":
-                logging.error(f"错误: 消息 {i+1} 缺少content字段")
-                return JSONResponse(
-                    status_code=400,
-                    content={"error": f"消息 {i+1} 缺少content字段"}
-                )
-    except Exception as e:
-        logging.error(f"请求验证错误: {str(e)}")
-        logging.error(traceback.format_exc())
-        return JSONResponse(
-            status_code=400,
-            content={"error": f"请求验证错误: {str(e)}"}
-        )
     
     # 定义一个内部处理函数，用于超时控制
     async def process_chat_request():
@@ -958,10 +908,6 @@ async def chat_agent(request: ChatRequest):
 # 简单的聊天端点，直接返回JSON响应，支持工具调用和多模态消息
 @router.post("/chat-simple")
 async def chat_simple(request: ChatRequest):
-    # 初始化OpenAI客户端
-    http_client = httpx.Client()
-    client = OpenAI(api_key=OPENAI_API_KEY, http_client=http_client)
-    
     messages = request.messages
     session_id = request.session_id
     turn_id = request.turn_id
@@ -1081,10 +1027,10 @@ async def chat_simple(request: ChatRequest):
                         api_key = os.getenv("TAVILY_API_KEY")
                         if api_key:
                             # 创建 Tavily 客户端
-                            client_tavily = TavilyClient(api_key=api_key)
+                            client = TavilyClient(api_key=api_key)
                             
                             # 执行搜索
-                            search_result = client_tavily.search(
+                            search_result = client.search(
                                 query=search_query,
                                 search_depth="basic",
                                 max_results=5,  # 限制结果数量

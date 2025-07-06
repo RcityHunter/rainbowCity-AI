@@ -449,9 +449,9 @@ function AiChatCore() {
           {isLoadingConversations ? (
             <div className="loading-conversations">加载中...</div>
           ) : conversations.length > 0 ? (
-            conversations.map((conv, index) => (
+            conversations.map(conv => (
               <div 
-                key={conv.id || `conv-${index}`}
+                key={conv.id}
                 className={`conversation-item ${currentConversationId === conv.id ? 'active' : ''}`}
                 onClick={() => boundHandleSelectConversation(conv.id)}
               >

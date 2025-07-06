@@ -72,10 +72,8 @@ export const login = async (email, password) => {
     console.log('Attempting login for:', email);
     // 使用 FastAPI OAuth2 格式发送登录请求
     const formData = new URLSearchParams();
-    formData.append('username', email);  // FastAPI OAuth2 使用 username 字段，但我们传入邮箱
+    formData.append('username', email);  // FastAPI OAuth2 使用 username 字段
     formData.append('password', password);
-    
-    console.log('Using email as login credential:', email);
     
     const response = await axios.post(API_URL + 'login', formData, {
       headers: {
@@ -265,73 +263,24 @@ export const handleGoogleCallback = async (code) => {
 // 处理GitHub OAuth回调
 export const handleGithubCallback = async (code) => {
   try {
-    console.log('Processing GitHub OAuth callback with code:', code.substring(0, 5) + '...');
-    console.log('Code length:', code.length);
+    console.log('Processing GitHub OAuth callback with code:', code);
+    const response = await axios.post(OAUTH_URL + 'github/callback', { code });
     
-    // 添加请求超时设置，防止长时间等待
-    const response = await axios.post(OAUTH_URL + 'github/callback', { code }, {
-      timeout: 15000, // 15秒超时
-      validateStatus: function (status) {
-        // 只将 2xx 状态码视为成功，避免混淆
-        return status >= 200 && status < 300;
-      }
-    });
+    console.log('GitHub OAuth response:', response.data);
     
-    console.log('GitHub OAuth response status:', response.status);
-    console.log('GitHub OAuth response data:', response.data);
-    
-    // 检查响应中是否有 access_token
-    if (response.data && response.data.access_token) {
-      console.log('GitHub OAuth successful, received access token');
+    if (response.data.access_token) {
       localStorage.setItem('token', response.data.access_token);
+      localStorage.setItem('user', JSON.stringify(response.data.user));
       
-      // 检查响应中是否有用户信息
-      if (response.data.user) {
-        localStorage.setItem('user', JSON.stringify(response.data.user));
-        
-        if (response.data.user.id) {
-          console.log('Storing user ID from GitHub OAuth:', response.data.user.id);
-          localStorage.setItem('userId', response.data.user.id);
-        }
-      } else {
-        console.warn('GitHub OAuth response missing user data');
+      if (response.data.user && response.data.user.id) {
+        console.log('Storing user ID from GitHub OAuth:', response.data.user.id);
+        localStorage.setItem('userId', response.data.user.id);
       }
-      
-      return response.data;
-    } else {
-      console.error('GitHub OAuth response missing access_token:', response.data);
-      throw new Error('GitHub认证响应缺少访问令牌');
     }
+    
+    return response.data;
   } catch (error) {
     console.error('GitHub OAuth callback error:', error);
-    
-    // 检查是否有详细的错误响应
-    if (error.response && error.response.data) {
-      console.error('Error response data:', error.response.data);
-      
-      // 检查是否是授权码过期错误
-      if (error.response.data.error === 'oauth_token_error' || 
-          (error.response.data.details && error.response.data.details.error_type === 'bad_verification_code')) {
-        throw new Error('授权码已过期或无效，请重新登录');
-      }
-      
-      // 如果有错误消息，直接抛出
-      if (error.response.data.message) {
-        throw new Error(error.response.data.message);
-      }
-      
-      // 如果有错误代码，抛出错误
-      if (error.response.data.error) {
-        throw new Error(`GitHub登录失败: ${error.response.data.error}`);
-      }
-    }
-    
-    // 如果是超时错误
-    if (error.code === 'ECONNABORTED') {
-      throw new Error('GitHub登录超时，请检查网络连接并重试');
-    }
-    
-    // 其他错误
-    throw error.response?.data?.error || error.message || 'GitHub登录失败，请稍后再试';
+    throw error.response?.data?.error || 'GitHub登录失败';
   }
 };

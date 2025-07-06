@@ -105,17 +105,6 @@
   box-shadow: none;
 }
 
-.button-loading {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-}
-
-.button-loading span {
-  margin-left: 4px;
-}
-
 .auth-error {
   background: rgba(255, 50, 50, 0.2);
   color: #ff6b6b;

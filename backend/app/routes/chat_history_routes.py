@@ -470,14 +470,7 @@ async def update_chat(
             update_data['last_message_preview'] = chat_data.last_message_preview
         
         # 更新聊天会话
-        # 从 chat_id 中提取纯准ID，去除表名前缀
-        pure_id = chat_id
-        if ':' in chat_id:
-            _, pure_id = chat_id.split(':', 1)
-            logging.info(f"从 {chat_id} 提取纯准ID: {pure_id}")
-        
-        logging.info(f"更新聊天会话，表名: chat, ID: {pure_id}, 数据: {update_data}")
-        updated_chat = update('chat', pure_id, update_data)  # 使用纯准ID而不是带前缀的ID
+        updated_chat = update('chat', chat_id, update_data)
         
         return {
             'message': 'Chat updated successfully',
@@ -549,36 +542,12 @@ async def delete_chat(
 
 @router.get("/{chat_id}/messages", response_model=MessagesResponse)
 async def get_chat_messages(
-    chat_id: str = Path(...),
+    chat_id: str = Path(..., description="聊天会话ID"),
     page: int = Query(1, description="页码，从1开始"),
     per_page: int = Query(20, description="每页消息数"),
     current_user: Dict[str, Any] = Depends(get_current_user)
 ):
-    """获取特定聊天会话的消息
-    
-    如果chat_id是JSON对象字符串，尝试解析并提取实际ID
-    """
-    # 检查chat_id是否是JSON对象字符串
-    if chat_id.startswith('{') and chat_id.endswith('}'):
-        try:
-            # 尝试解析JSON对象
-            obj = json.loads(chat_id)
-            logging.info(f"检测到JSON对象ID: {obj}")
-            
-            # 如果是SurrealDB格式的ID对象 {table_name: "chat", id: "xxx"}
-            if 'table_name' in obj and 'id' in obj:
-                actual_id = obj['id']
-                logging.info(f"从SurrealDB对象中提取的实际ID: {actual_id}")
-                return await get_chat_messages_by_query(table_name=obj['table_name'], id=actual_id, page=page, per_page=per_page, current_user=current_user)
-            elif 'id' in obj:
-                # 如果对象有id字段，使用该字段作为实际ID
-                actual_id = obj['id']
-                logging.info(f"从对象中提取的实际ID: {actual_id}")
-                chat_id = actual_id
-        except json.JSONDecodeError:
-            logging.warning(f"无法解析JSON对象ID: {chat_id}")
-    
-    # 继续原有的处理逻辑
+    """获取特定聊天会话的消息"""
     user_id = current_user.get('id')
     
     try:
@@ -847,14 +816,7 @@ async def add_chat_message(
                 }
                 
                 # 使用异步版本的update函数
-                # 从 chat_id_for_query 中提取纯准ID，去除表名前缀
-                pure_id = chat_id_for_query
-                if ':' in chat_id_for_query:
-                    _, pure_id = chat_id_for_query.split(':', 1)
-                    logging.info(f"从 {chat_id_for_query} 提取纯准ID: {pure_id}")
-                
-                logging.info(f"更新聊天会话，表名: chat, ID: {pure_id}, 数据: {update_data}")
-                await update('chat', pure_id, update_data)  # 使用纯准ID而不是带前缀的ID
+                await update('chat', chat_id_for_query, update_data)  # 使用正确格式的chat_id
                 
                 # 成功后返回结果
                 return {
@@ -946,14 +908,7 @@ async def add_chat_messages_batch(
                     'last_message_preview': preview
                 }
                 
-                # 从 chat_id 中提取纯准ID，去除表名前缀
-                pure_id = chat_id
-                if ':' in chat_id:
-                    _, pure_id = chat_id.split(':', 1)
-                    logging.info(f"从 {chat_id} 提取纯准ID: {pure_id}")
-                
-                logging.info(f"更新聊天会话，表名: chat, ID: {pure_id}, 数据: {update_data}")
-                await db.update(f"chat:{pure_id}", update_data)  # 使用纯准ID而不是带前缀的ID
+                await db.update(f"chat:{chat_id}", update_data)
             
             return created_messages
         
@@ -972,163 +927,3 @@ async def add_chat_messages_batch(
     except Exception as e:
         logging.error(f"批量添加消息时出错: {str(e)}")
         raise HTTPException(status_code=500, detail=f"批量添加消息失败: {str(e)}")
-
-
-@router.get("/query/messages", response_model=MessagesResponse)
-async def get_chat_messages_by_query(
-    table_name: str = Query(None, description="表名"),
-    id: str = Query(None, description="ID"),
-    page: int = Query(1, description="页码，从1开始"),
-    per_page: int = Query(20, description="每页消息数"),
-    current_user: Dict[str, Any] = Depends(get_current_user)
-):
-    """通过查询参数获取特定聊天会话的消息
-    
-    这个路由专门用于处理复杂ID对象的情况，例如前端传递的是 {table_name: "chat", id: "xxx"} 格式的ID
-    """
-    user_id = current_user.get('id')
-    
-    try:
-        # 构造实际的chat_id
-        if table_name and id:
-            actual_id = id
-            logging.info(f"从查询参数构造ID: table_name={table_name}, id={id}")
-        else:
-            raise HTTPException(status_code=400, detail="缺少必要的查询参数")
-        
-        # 查询聊天会话 - 检查ID格式
-        chat_id_for_query = actual_id
-        # 如果ID已经包含chat:前缀，则直接使用，否则添加前缀
-        if actual_id.startswith("chat:"):
-            chat_id_for_query = actual_id
-        else:
-            chat_id_for_query = f"chat:{actual_id}"
-        
-        logging.info(f"查询聊天会话，ID: {chat_id_for_query}")
-        chats = await query("chat", {"id": chat_id_for_query})
-        
-        if not chats or len(chats) == 0:
-            raise HTTPException(status_code=404, detail="聊天会话不存在")
-        
-        chat = chats[0]
-        
-        # 验证所有权
-        if chat.get('user_id') != user_id:
-            raise HTTPException(status_code=403, detail="无权访问此聊天会话")
-        
-        # 查询消息 - 先检查ID格式
-        logging.info(f"原始ID: {actual_id}")
-        
-        # 如果ID已经包含chat:前缀，则直接使用，否则添加前缀
-        if actual_id.startswith("chat:"):
-            chat_id_with_prefix = actual_id
-        else:
-            chat_id_with_prefix = f"chat:{actual_id}"
-        
-        logging.info(f"查询消息，chat_id: {chat_id_with_prefix}")
-        
-        # 先从 message 表查询
-        all_messages = await query('message', {'chat_id': chat_id_with_prefix})
-        logging.info(f"message表查询结果数量: {len(all_messages) if all_messages else 0}")
-        
-        # 如果在message表中没有找到，尝试从 chat_messages 表查询
-        if not all_messages or len(all_messages) == 0:
-            logging.info(f"在message表中没有找到消息，尝试从 chat_messages 表查询")
-            try:
-                chat_messages = await query('chat_messages', {'session_id': chat_id_with_prefix})
-                logging.info(f"chat_messages表查询结果数量: {len(chat_messages) if chat_messages else 0}")
-                
-                # 如果在chat_messages表中找到了消息，将其转换为message表的格式
-                if chat_messages and len(chat_messages) > 0:
-                    all_messages = []
-                    for msg in chat_messages:
-                        # 转换格式
-                        converted_msg = {
-                            'id': msg.get('id', f"msg_{int(time.time())}_{id(msg)}"),
-                            'chat_id': chat_id_with_prefix,
-                            'role': msg.get('role', 'unknown'),
-                            'content': msg.get('content', ''),
-                            'timestamp': msg.get('created_at', datetime.now().isoformat())
-                        }
-                        # 添加可选字段
-                        if 'metadata' in msg:
-                            converted_msg['metadata'] = msg['metadata']
-                        if 'token_count' in msg:
-                            converted_msg['token_count'] = msg['token_count']
-                        
-                        all_messages.append(converted_msg)
-                    
-                    logging.info(f"从 chat_messages 表转换了 {len(all_messages)} 条消息")
-            except Exception as e:
-                logging.error(f"查询 chat_messages 表出错: {str(e)}")
-        
-        total = len(all_messages) if all_messages else 0
-        logging.info(f"消息总数: {total}")
-        
-        # 计算分页
-        offset = (page - 1) * per_page
-        
-        # 按时间戳排序
-        if all_messages:
-            # 确保所有消息都有timestamp字段，如果没有则使用当前时间
-            for msg in all_messages:
-                if 'timestamp' not in msg or not msg['timestamp']:
-                    msg['timestamp'] = datetime.now().isoformat()
-                    logging.info(f"添加缺失的timestamp字段: {msg['id'] if 'id' in msg else 'unknown'}")
-            
-            all_messages.sort(key=lambda x: x.get('timestamp', ''))
-            
-            # 分页获取消息
-            messages = all_messages[offset:offset + per_page] if offset < total else []
-            
-            # 确保所有返回的消息都有必需的字段
-            for msg in messages:
-                # 确保所有必需字段都存在
-                if 'id' not in msg:
-                    msg['id'] = f"msg_{int(time.time())}_{id(msg)}"
-                if 'role' not in msg:
-                    msg['role'] = 'unknown'
-                if 'content' not in msg:
-                    msg['content'] = ''
-                    
-                # 确保content字段是字符串类型
-                if not isinstance(msg['content'], str):
-                    try:
-                        # 如果是字典类型，尝试提取response字段或转换为JSON字符串
-                        if isinstance(msg['content'], dict):
-                            if 'response' in msg['content']:
-                                msg['content'] = str(msg['content']['response'])
-                            else:
-                                msg['content'] = json.dumps(msg['content'])
-                        else:
-                            # 其他类型直接转换为字符串
-                            msg['content'] = str(msg['content'])
-                    except Exception as e:
-                        logging.error(f"转换消息内容为字符串时出错: {str(e)}")
-                        msg['content'] = ''
-        else:
-            messages = []
-        
-        # 计算是否有更多消息
-        has_more = (offset + len(messages)) < total
-        
-        logging.info(f"返回消息数量: {len(messages)}")
-        if messages:
-            logging.info(f"第一条消息示例: {messages[0]}")
-        else:
-            logging.info("没有消息返回")
-        
-        return {
-            'messages': messages,
-            'total': total,
-            'page': page,
-            'per_page': per_page,
-            'has_more': has_more
-        }
-            
-    except HTTPException:
-        raise
-    except Exception as e:
-        logging.error(f"获取聊天消息时出错: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"获取聊天消息失败: {str(e)}")
-

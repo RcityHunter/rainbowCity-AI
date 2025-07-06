@@ -1,15 +1,13 @@
 import os
 import jwt
 import logging
-import asyncio
 from datetime import datetime, timedelta
-from typing import Dict, Any, Optional, List, Union
+from typing import Dict, Optional, Any, Union
 from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
 from passlib.context import CryptContext
 from app.models.user import User
 from app.extensions import db
-from app.db import execute_raw_query
 import asyncio
 
 # 设置日志记录
@@ -68,13 +66,7 @@ async def get_user(user_id: str) -> Optional[User]:
         
         # 使用query函数代替db.fetch_one
         from app.db import query
-        users_result = query('users', {'id': uuid})
-        
-        # 检查是否为协程并等待结果
-        if asyncio.iscoroutine(users_result):
-            users = await users_result
-        else:
-            users = users_result
+        users = await query('users', {'id': uuid})
         
         if users and len(users) > 0:
             # 获取第一个匹配的用户
@@ -88,101 +80,60 @@ async def get_user(user_id: str) -> Optional[User]:
             return user
         else:
             # 如果用户不存在，创建一个临时用户（用于开发/测试环境）
-            # 无论环境如何，都创建临时用户以方便开发和测试
-            logger.warning(f"User {user_id} not found, creating temporary user")
-            temp_user = {
-                "id": uuid,
-                "username": f"temp_{uuid[:8]}",
-                "email": f"temp_{uuid[:8]}@example.com",
-                "password_hash": get_password_hash("temppassword"),
-                "created_at": datetime.utcnow(),
-                "is_activated": True
-            }
-            user = temp_user
-            user_cache[user_id] = {
-                "user": user,
-                "expires_at": datetime.now() + timedelta(seconds=CACHE_TIMEOUT)
-            }
-            return user
+            if os.environ.get("APP_ENV") == "development":
+                logger.warning(f"User {user_id} not found, creating temporary user for development")
+                temp_user = {
+                    "id": uuid,
+                    "username": f"temp_{uuid[:8]}",
+                    "email": f"temp_{uuid[:8]}@example.com",
+                    "password_hash": get_password_hash("temppassword"),
+                    "created_at": datetime.utcnow(),
+                    "is_activated": True
+                }
+                user = temp_user
+                user_cache[user_id] = {
+                    "user": user,
+                    "expires_at": datetime.now() + timedelta(seconds=CACHE_TIMEOUT)
+                }
+                return user
+            
+            logger.warning(f"User {user_id} not found")
+            return None
     except Exception as e:
         logger.error(f"Error getting user {user_id}: {str(e)}")
         return None
 
 
-async def authenticate_user(username_or_email: str, password: str) -> Optional[Dict]:
-    """验证用户凭证并返回用户信息
-    
-    Args:
-        username_or_email: 用户名或邮箱
-        password: 密码
-        
-    Returns:
-        如果验证成功，返回用户信息字典，否则返回None
+async def authenticate_user(username: str, password: str) -> Optional[User]:
+    """
+    验证用户名和密码
     """
     try:
-        # 使用原始SQL查询替代条件字典查询，确保正确查找用户
-        logging.info(f"尝试使用用户名或邮箱登录: {username_or_email}")
-        query_str = f"SELECT * FROM users WHERE email = '{username_or_email}' OR username = '{username_or_email}'"
-        logging.info(f"执行查询: {query_str}")
+        # 使用query函数代替db.fetch_one
+        from app.db import query
         
-        # 执行查询
-        result = await execute_raw_query(query_str)
-        logging.info(f"查询结果类型: {type(result)}, 内容: {result}")
+        # 查询用户名或邮箱匹配的用户
+        users_by_username = await query('users', {'username': username})
+        users_by_email = await query('users', {'email': username})
         
-        # 处理查询结果 - 兼容不同版本的SurrealDB SDK返回格式
-        users = []
-        if result:
-            # 如果是列表
-            if isinstance(result, list):
-                # 如果是旧格式，包含'result'键
-                if len(result) > 0 and isinstance(result[0], dict) and 'result' in result[0]:
-                    users = result[0]['result']
-                    logging.info(f"旧格式结果，找到 {len(users)} 个用户")
-                # 如果是新格式，直接使用列表
-                else:
-                    users = result
-                    logging.info(f"新格式结果，找到 {len(users)} 个用户")
-            # 如果是其他类型，尝试直接使用
-            elif isinstance(result, dict):
-                users = [result]
-                logging.info("结果是单个字典，将其包装为列表")
+        # 合并结果
+        users = users_by_username or users_by_email
         
-        # 如果找到用户
-        if users and len(users) > 0:
-            user = users[0]
-            logging.info(f"找到用户: {user.get('username')}, 开始验证密码")
+        if not users or len(users) == 0:
+            logger.warning(f"No user found with username/email: {username}")
+            return None
             
-            # 验证密码
-            stored_password_hash = user.get('password_hash')
-            if stored_password_hash:
-                try:
-                    # 使用passlib的verify_password函数验证密码
-                    if verify_password(password, stored_password_hash):
-                        logging.info("密码验证成功")
-                        
-                        # 将RecordID对象转换为字符串
-                        user_id = user.get('id')
-                        if hasattr(user_id, '__str__'):
-                            user['id'] = str(user_id)
-                            
-                        # 确保所有RecordID对象都被序列化为字符串
-                        for key, value in user.items():
-                            if hasattr(value, '__str__') and hasattr(value, 'record_id'):
-                                user[key] = str(value)
-                                
-                        return user
-                    else:
-                        logging.warning("密码验证失败")
-                except Exception as verify_error:
-                    logging.error(f"密码验证过程中出错: {str(verify_error)}")
-            else:
-                logging.warning("用户没有密码哈希值")
-        else:
-            logging.warning(f"未找到用户: {username_or_email}")
+        user = users[0]
+        
+        # 验证密码
+        if not verify_password(password, user.get('password_hash', '')):
+            logger.warning(f"Invalid password for user: {username}")
+            return None
+            
+        return user
     except Exception as e:
-        logging.error(f"认证过程中出错: {str(e)}")
-    
-    return None
+        logger.error(f"Error authenticating user {username}: {str(e)}")
+        return None
 
 
 def create_access_token(data: Dict[str, Any], expires_delta: Optional[timedelta] = None) -> str:
