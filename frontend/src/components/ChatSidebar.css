@@ -4,7 +4,7 @@
   left: 0;
   top: 0;
   height: 100vh;
-  width: 250px;
+  width: 300px;
   z-index: 1000;
   display: flex;
   overflow: hidden;
@@ -15,7 +15,7 @@
 .chat-sidebar.expanded {
   /* 保持与上面相同的样式，不再需要过渡效果 */
   left: 0;
-  width: 250px;
+  width: 300px;
 }
 
 /* 移除触发区域相关样式 */
@@ -262,7 +262,7 @@
 /* 移动端适配 */
 @media (max-width: 768px) {
   .chat-sidebar.expanded {
-    width: 220px;
+    width: 270px;
   }
   
   .sidebar-trigger {

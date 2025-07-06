@@ -54,13 +54,13 @@ html, body {
 
 /* 主容器样式 */
 .ai-chat-container {
-  width: calc(100% - 250px); /* 考虑新的侧边栏宽度 */
+  width: calc(100% - 300px); /* 考虑新的侧边栏宽度 */
   height: 100vh;
   display: flex;
   flex-direction: column;
   padding: 0;
   margin: 0;
-  margin-left: 250px; /* 为侧边栏留出空间 */
+  margin-left: 300px; /* 为侧边栏留出空间 */
   background-color: var(--bg-dark);
   color: var(--text-primary);
   position: fixed;
